@@ -1,0 +1,41 @@
+# Nobl9 Account Analysis Output Files
+# Exclude all generated reports and exports
+
+# CSV exports
+nobl9_account_analysis_*.csv
+
+# JSON exports  
+nobl9_account_analysis_*.json
+
+# Excel exports
+nobl9_account_analysis_*.xlsx
+
+# Markdown exports
+nobl9_account_analysis_*.md
+
+# General pattern for any context-specific exports
+nobl9_account_analysis_*_*.csv
+nobl9_account_analysis_*_*.json
+nobl9_account_analysis_*_*.xlsx
+nobl9_account_analysis_*_*.md
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.venv/
+venv/
+env/
