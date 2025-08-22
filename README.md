@@ -1,6 +1,6 @@
 # Nobl9 Account Analyzer
 
-A comprehensive Python tool for analyzing Nobl9 SLO platform accounts, providing detailed insights into project health, SLO coverage, alert policy effectiveness, and resource utilization.
+A comprehensive Python tool for analyzing Nobl9 SLO organizations, providing detailed insights into project health, SLO coverage, alert policy effectiveness, and resource utilization.
 
 ## Overview
 
@@ -43,8 +43,8 @@ pip install requests colorama toml pandas openpyxl
 
 1. Clone or download the script:
 ```bash
-git clone <repository-url>
-cd account_analysis
+git clone https://github.com/jcoope02/nobl9-account-analyzer.git
+cd nobl9-account-analyzer
 ```
 
 2. Install required dependencies:
@@ -56,6 +56,36 @@ pip install -r requirements.txt
 ```bash
 sloctl config view
 ```
+
+### Windows Setup
+
+**Install Dependencies:**
+```cmd
+# Using Command Prompt or PowerShell
+pip install -r requirements.txt
+```
+
+**Nobl9 CLI Setup:**
+- Download `sloctl` for Windows from Nobl9 documentation
+- Add `sloctl` to your system PATH
+- Configure with: `sloctl config view`
+
+**Windows Configuration Path:**
+- Configuration file location: `%LOCALAPPDATA%\nobl9\config.toml`
+- Example: `C:\Users\username\AppData\Local\nobl9\config.toml`
+
+**Running on Windows:**
+```cmd
+# PowerShell or Command Prompt
+python account_analyzer.py
+python account_analyzer.py --format excel
+python account_analyzer.py --audit-days 30
+```
+
+**Windows Terminal Recommendations:**
+- Use Windows Terminal for best color support
+- PowerShell 5.1+ or PowerShell Core recommended
+- Command Prompt also supported
 
 ## Configuration
 
@@ -233,6 +263,23 @@ The tool is optimized for efficiency:
 - Confirm pandas and openpyxl installation
 - Verify write permissions in output directory
 - Check available disk space
+
+### Windows-Specific Issues
+
+**Configuration File Not Found**:
+- Check path: `%LOCALAPPDATA%\nobl9\config.toml`
+- Verify sloctl is properly installed for Windows
+- Run `sloctl config view` to verify setup
+
+**Color Display Issues**:
+- Install colorama: `pip install colorama`
+- Use Windows Terminal for best color support
+- Some older terminals may not display colors properly
+
+**Permission Errors**:
+- Run PowerShell/Command Prompt as Administrator if needed
+- Check antivirus software blocking file creation
+- Verify output directory write permissions
 
 ## Support
 
