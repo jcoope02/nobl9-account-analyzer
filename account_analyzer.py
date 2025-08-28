@@ -16,6 +16,7 @@ import sys
 import subprocess
 import requests
 import base64
+import re
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple
 import argparse
@@ -28,9 +29,9 @@ import colorama
 colorama.init()
 
 
-def print_colored(text: str, color: str) -> None:
+def print_colored(text: str, color: str, end: str = "\n") -> None:
     """Print colored text."""
-    print(f"{color}{text}{colorama.Fore.RESET}")
+    print(f"{color}{text}{colorama.Fore.RESET}", end=end)
 
 def print_header(text: str) -> None:
     """Print a formatted header."""
@@ -55,6 +56,28 @@ class SLOInfo:
     project: str
     service: str
     description: str
+    target: float
+    time_window: str
+    alert_policies: List[str]
+    health_status: str
+    created_at: str
+    updated_at: str
+
+@dataclass
+class CompositeSLOComponent:
+    name: str
+    weight: float
+    normalized_weight: float
+    when_delayed: str
+    target: float
+
+@dataclass
+class CompositeSLOInfo:
+    name: str
+    project: str
+    description: str
+    components: List[CompositeSLOComponent]  # List of component SLOs with details
+    component_count: int
     target: float
     time_window: str
     alert_policies: List[str]
@@ -95,6 +118,8 @@ class AuditLogEntry:
 class AccountSummary:
     total_projects: int
     total_slos: int
+    total_composite_slos: int
+    total_composite_components: int
     total_services: int
     total_alert_policies: int
     total_alerts: int
@@ -236,7 +261,6 @@ def authenticate(credentials: Dict[str, Any]) -> Tuple[str, str, bool, Optional[
                 if "error" in error_data:
                     error_info = error_data["error"]
                     if isinstance(error_info, str):
-                        import re
                         json_match = re.search(r'\{.*\}', error_info)
                         if json_match:
                             nested_error = json.loads(json_match.group())
@@ -295,22 +319,27 @@ class Nobl9AccountAnalyzer:
         # Data storage
         self.projects: List[ProjectInfo] = []
         self.slos: List[SLOInfo] = []
+        self.composite_slos: List[CompositeSLOInfo] = []  # Store composite SLOs
         self.alert_policies: List[AlertPolicyInfo] = []
         self.services: List[ServiceInfo] = []
         self.audit_logs: List[AuditLogEntry] = []
         self.raw_slo_data: List[Dict] = []  # Store raw SLO data for analysis
-        
-        # Load configuration and authenticate
-        self._setup_authentication()
     
-    def _setup_authentication(self):
+    def _setup_authentication(self, context_name: str = None):
         """Setup authentication using the same method as alert scripts"""
         print_colored("Setting up authentication...", colorama.Fore.CYAN)
         
         # Choose context and authenticate
         print_header("AUTHENTICATION")
-        context_name, credentials = enhanced_choose_context()
-        print_colored(f"Selected context: {context_name}", colorama.Fore.GREEN)
+        if context_name:
+            print_colored(f"Using specified context: {context_name}", colorama.Fore.GREEN)
+            credentials = get_credentials_for_context(context_name)
+            if not credentials:
+                print_colored(f"❌ Context '{context_name}' not found in configuration", colorama.Fore.RED)
+                sys.exit(1)
+        else:
+            context_name, credentials = enhanced_choose_context()
+            print_colored(f"Selected context: {context_name}", colorama.Fore.GREEN)
 
         token, org_id, is_custom_instance, base_url = authenticate(credentials)
         print_colored("✓ Authentication successful", colorama.Fore.GREEN)
@@ -355,13 +384,20 @@ class Nobl9AccountAnalyzer:
                 ["sloctl"] + command + ["-o", "json"],
                 capture_output=True, text=True, check=True
             )
+            
+            # Handle empty output gracefully
+            if not result.stdout.strip():
+                print(f"Warning: No data returned for command {' '.join(command)}")
+                return []
+            
             return json.loads(result.stdout)
         except subprocess.CalledProcessError as e:
             print(f"Error running sloctl command {' '.join(command)}: {e}")
-            return {}
+            return []
         except json.JSONDecodeError as e:
-            print(f"Error parsing JSON output: {e}")
-            return {}
+            print(f"Error parsing JSON output for command {' '.join(command)}: {e}")
+            print(f"Raw output: {result.stdout[:200]}...")
+            return []
     
     def collect_projects(self):
         """Collect all projects from Nobl9"""
@@ -393,13 +429,78 @@ class Nobl9AccountAnalyzer:
             for item in data:
                 metadata = item.get("metadata", {})
                 spec = item.get("spec", {})
+                indicator = spec.get("indicator", {})
+                
+                # Check if this is a composite SLO by looking for objectives with composite components
+                objectives = spec.get("objectives", [])
+                composite_components = []
+                
+                for objective in objectives:
+                    if "composite" in objective and "components" in objective.get("composite", {}):
+                        
+                        composite_spec = objective.get("composite", {})
+                        component_objectives = composite_spec.get("components", {}).get("objectives", [])
+                        
+                        # Parse component details
+                        for comp_obj in component_objectives:
+                            component = CompositeSLOComponent(
+                                name=f"{comp_obj.get('project', '')}/{comp_obj.get('slo', '')}/{comp_obj.get('objective', '')}",
+                                weight=comp_obj.get("weight", 0.0),
+                                normalized_weight=comp_obj.get("weight", 0.0),  # Will calculate normalized weight later
+                                when_delayed=comp_obj.get("whenDelayed", ""),
+                                target=comp_obj.get("target", 0.0)
+                            )
+                            composite_components.append(component)
+                
+                # If we found composite components, create the composite SLO
+                if composite_components:
+                    # Calculate normalized weights
+                    total_weight = sum(comp.weight for comp in composite_components)
+                    for comp in composite_components:
+                        if total_weight > 0:
+                            comp.normalized_weight = comp.weight / total_weight
+                        else:
+                            comp.normalized_weight = 0.0
+                    
+                    # Get the target from the composite objective
+                    composite_target = 0.0
+                    for objective in objectives:
+                        if "composite" in objective and "components" in objective.get("composite", {}):
+                            composite_target = objective.get("target", 0.0)
+                            break
+                    
+                    composite_slo = CompositeSLOInfo(
+                        name=metadata.get("name", ""),
+                        project=metadata.get("project", ""),
+                        description=spec.get("description", ""),
+                        components=composite_components,
+                        component_count=len(composite_components),
+                        target=composite_target,
+                        time_window=str(spec.get("timeWindows", [])),
+                        alert_policies=spec.get("alertPolicies", []),
+                        health_status=item.get("status", {}).get("health", "unknown"),
+                        created_at=spec.get("createdAt", ""),
+                        updated_at=item.get("status", {}).get("updatedAt", "")
+                    )
+                    self.composite_slos.append(composite_slo)
+                
+                # Regular SLO collection (existing code)
+                # Get target from objectives if available, otherwise from spec
+                slo_target = 0.0
+                if objectives and not composite_components:  # Only for non-composite SLOs
+                    for objective in objectives:
+                        if "target" in objective:
+                            slo_target = objective.get("target", 0.0)
+                            break
+                else:
+                    slo_target = spec.get("target", 0.0)
                 
                 slo = SLOInfo(
                     name=metadata.get("name", ""),
                     project=metadata.get("project", ""),
                     service=spec.get("service", ""),
                     description=spec.get("description", ""),
-                    target=spec.get("target", 0.0),
+                    target=slo_target,
                     time_window=str(spec.get("timeWindows", [])),
                     alert_policies=spec.get("alertPolicies", []),
                     health_status=item.get("status", {}).get("health", "unknown"),
@@ -408,7 +509,7 @@ class Nobl9AccountAnalyzer:
                 )
                 self.slos.append(slo)
         
-        print("Collected SLOs")
+        print(f"Collected SLOs (Total: {len(self.slos)}, Composite: {len(self.composite_slos)})")
     
     def collect_alert_policies(self):
         """Collect all alert policies from all projects"""
@@ -430,8 +531,10 @@ class Nobl9AccountAnalyzer:
                     updated_at=metadata.get("generation", "")
                 )
                 self.alert_policies.append(policy)
+        else:
+            print("No alert policies found or error occurred during collection")
         
-        print("Collected alert policies")
+        print(f"Collected {len(self.alert_policies)} alert policies")
     
     def collect_services(self):
         """Collect all services from all projects"""
@@ -656,6 +759,7 @@ class Nobl9AccountAnalyzer:
         # Get API metrics from usage summary
         total_users = 0
         total_slo_units = 0
+        total_composite_components_api = 0
         
         if hasattr(self, '_usage_summary') and self._usage_summary:
             usage_data = self._usage_summary.get("usageSummary", {})
@@ -670,10 +774,17 @@ class Nobl9AccountAnalyzer:
             slo_units_data = usage_data.get("sloUnits", {})
             if slo_units_data:
                 total_slo_units = slo_units_data.get("currentUsage", 0)
+            
+            # Get composite SLO components count from API
+            composite_components_data = usage_data.get("compositeSloComponents", {})
+            if composite_components_data:
+                total_composite_components_api = composite_components_data.get("currentUsage", 0)
         
         summary = AccountSummary(
             total_projects=len(self.projects),
             total_slos=len(self.slos),
+            total_composite_slos=len(self.composite_slos),
+            total_composite_components=sum(slo.component_count for slo in self.composite_slos),
             total_services=len(self.services),
             total_alert_policies=len(self.alert_policies),
             total_alerts=0,  # Will be implemented later
@@ -699,6 +810,8 @@ class Nobl9AccountAnalyzer:
             self._export_json(summary)
         elif output_format == "excel":
             self._export_excel(summary)
+        elif output_format == "yaml":
+            self._export_yaml(summary)
         else:
             print(f"Unsupported output format: {output_format}")
     
@@ -716,11 +829,13 @@ class Nobl9AccountAnalyzer:
         print_colored(f"Total Projects: {summary.total_projects}", colorama.Fore.WHITE)
         print_colored(f"Total SLOs: {summary.total_slos}", colorama.Fore.WHITE)
         print_colored(f"Total SLO Units: {summary.total_slo_units}", colorama.Fore.WHITE)
+        print_colored(f"Total Composite SLOs: {summary.total_composite_slos}", colorama.Fore.WHITE)
+        print_colored(f"Total Composite Components: {summary.total_composite_components}", colorama.Fore.WHITE)
         print_colored(f"Total Services: {summary.total_services}", colorama.Fore.WHITE)
         print_colored(f"Total Alert Policies: {summary.total_alert_policies}", colorama.Fore.WHITE)
         print_colored(f"Total Data Sources: {summary.total_data_sources}", colorama.Fore.WHITE)
         print_colored(f"Total Users: {summary.total_users}", colorama.Fore.WHITE)
-        coverage_color = colorama.Fore.GREEN if summary.slo_coverage > 50 else colorama.Fore.YELLOW if summary.slo_coverage > 25 else colorama.Fore.RED
+        coverage_color = colorama.Fore.GREEN if summary.slo_coverage > 50 else colorama.Fore.YELLOW if summary.slo_coverage > 25 else colorama.Fore.YELLOW
         print_colored(f"Alert Coverage: {summary.slo_coverage:.1f}%", coverage_color)
         print_colored(f"Last 7 Days Changes: {summary.last_7_days_changes}", colorama.Fore.WHITE)
         
@@ -766,6 +881,65 @@ class Nobl9AccountAnalyzer:
                     break
             if len(projects_without_slos) > 25:
                 print_colored(f"  ... and {len(projects_without_slos) - 25} more projects with no SLOs", colorama.Fore.YELLOW)
+            print()
+        
+        # Composite SLO Analysis
+        if self.composite_slos:
+            print_header("COMPOSITE SLO ANALYSIS")
+            print_colored(f"Total Composite SLOs: {len(self.composite_slos)}", colorama.Fore.WHITE)
+            print_colored(f"Total Composite Components: {sum(slo.component_count for slo in self.composite_slos)}", colorama.Fore.WHITE)
+            print()
+            
+            # Composite SLOs by component count
+            print_header("COMPOSITE SLOs BY COMPONENT COUNT")
+            print_colored(f"{'Name':<50} {'Project':<20} {'Components':<12} {'Target':<10}", colorama.Fore.WHITE)
+            print_colored("-" * 95, colorama.Fore.CYAN)
+            
+            for slo in sorted(self.composite_slos, key=lambda x: x.component_count, reverse=True):
+                target_str = f"{slo.target:.6f}" if slo.target else "N/A"
+                # Truncate long names and add ellipsis if needed
+                display_name = slo.name
+                if len(display_name) > 48:
+                    display_name = display_name[:45] + "..."
+                print(f"{display_name:<50} {slo.project:<20} {slo.component_count:<12} {target_str:<10}")
+            print()
+            
+            # Detailed breakdown
+            print_header("DETAILED COMPOSITE SLO BREAKDOWN")
+            for slo in sorted(self.composite_slos, key=lambda x: x.component_count, reverse=True):
+                print_colored(f"• {slo.name} ({slo.project}) - {slo.component_count} components", colorama.Fore.CYAN)
+                if slo.description:
+                    # Clean up description: remove line breaks, extra spaces, and special characters
+                    clean_description = slo.description.replace('\n', ' ').replace('\r', ' ').replace('•••', '...')
+                    # Remove multiple consecutive spaces
+                    clean_description = re.sub(r'\s+', ' ', clean_description).strip()
+                    print_colored(f"  Description: {clean_description}", colorama.Fore.WHITE)
+                
+                # Show component details in a table format
+                print_colored(f"  Components:", colorama.Fore.WHITE)
+                print_colored(f"    {'Name':<75} {'Weight':<10} {'Norm Weight':<12} {'When Delayed':<15} {'Composite Target':<18}", colorama.Fore.CYAN)
+                print_colored(f"    {'-' * 75} {'-' * 10} {'-' * 12} {'-' * 15} {'-' * 18}", colorama.Fore.CYAN)
+                for comp in slo.components:
+                    when_delayed_str = comp.when_delayed if comp.when_delayed else "N/A"
+                    weight_str = f"{comp.weight:.2f}" if comp.weight else "N/A"
+                    norm_weight_str = f"{comp.normalized_weight:.2f}" if comp.normalized_weight else "N/A"
+                    composite_target_str = f"{slo.target:.6f}" if slo.target else "N/A"
+                    
+                    # Truncate long names and add ellipsis if needed
+                    display_name = comp.name
+                    if len(display_name) > 73:
+                        display_name = display_name[:70] + "..."
+                    
+                    # Print component data with composite target in grey
+                    print_colored(f"    {display_name:<75} {weight_str:<10} {norm_weight_str:<12} {when_delayed_str:<15} ", colorama.Fore.WHITE, end="")
+                    print_colored(f"{composite_target_str:<18}", colorama.Fore.LIGHTBLACK_EX)
+                
+                if slo.alert_policies:
+                    print_colored(f"  Alert Policies: {', '.join(slo.alert_policies)}", colorama.Fore.WHITE)
+                print()
+        else:
+            print_header("COMPOSITE SLO ANALYSIS")
+            print_colored("No composite SLOs found in this account.", colorama.Fore.YELLOW)
             print()
         
         # Alert Coverage Analysis
@@ -816,7 +990,7 @@ class Nobl9AccountAnalyzer:
             services_by_slo_count = sorted(self.services, key=lambda x: x.slo_count, reverse=True)
             print_header("TOP SERVICES BY SLO COUNT")
             for i, service in enumerate(services_by_slo_count[:10], 1):
-                print(f"  {i:2d}. {service.name:<25} ({service.project:<15}) - {service.slo_count} SLOs")
+                print(f"  {i:2d}. {service.name:<25} ({service.project}) - {service.slo_count} SLOs")
             print()
             
             # Service coverage analysis
@@ -1056,8 +1230,9 @@ class Nobl9AccountAnalyzer:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"nobl9_account_analysis_{self.context_name}_{timestamp}.csv"
         
-        with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-            writer = csv.writer(csvfile)
+        try:
+            with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
             
             # Summary section
             writer.writerow(["Nobl9 Account Analysis Summary"])
@@ -1068,6 +1243,8 @@ class Nobl9AccountAnalyzer:
             writer.writerow(["Total Projects", summary.total_projects])
             writer.writerow(["Total SLOs", summary.total_slos])
             writer.writerow(["Total SLO Units", summary.total_slo_units])
+            writer.writerow(["Total Composite SLOs", summary.total_composite_slos])
+            writer.writerow(["Total Composite Components", summary.total_composite_components])
             writer.writerow(["Total Services", summary.total_services])
             writer.writerow(["Total Alert Policies", summary.total_alert_policies])
             writer.writerow(["Total Data Sources", summary.total_data_sources])
@@ -1103,6 +1280,30 @@ class Nobl9AccountAnalyzer:
                         slo.name, slo.project, slo.service, slo.description,
                         slo.target, "None", slo.health_status
                     ])
+            
+            # Composite SLOs section
+            if self.composite_slos:
+                writer.writerow([])
+                writer.writerow(["COMPOSITE SLOS"])
+                writer.writerow(["Name", "Project", "Description", "Component Count", "Target", "Alert Policies", "Health"])
+                for slo in self.composite_slos:
+                    alert_policies_str = ", ".join(slo.alert_policies) if slo.alert_policies else "None"
+                    writer.writerow([
+                        slo.name, slo.project, slo.description, slo.component_count,
+                        slo.target, alert_policies_str, slo.health_status
+                    ])
+                
+                # Component details section
+                writer.writerow([])
+                writer.writerow(["COMPOSITE SLO COMPONENTS"])
+                writer.writerow(["Composite SLO", "Project", "Component Name", "Weight", "Normalized Weight", "When Delayed", "Composite Target"])
+                for slo in self.composite_slos:
+                    for comp in slo.components:
+                        when_delayed_str = comp.when_delayed if comp.when_delayed else "N/A"
+                        composite_target = slo.target if slo.target is not None else "N/A"
+                        writer.writerow([
+                            slo.name, slo.project, comp.name, comp.weight, comp.normalized_weight, when_delayed_str, composite_target
+                        ])
             
             # Alert Policies section
             writer.writerow([])
@@ -1196,6 +1397,11 @@ class Nobl9AccountAnalyzer:
                 for user, count in summary.top_active_users:
                     percentage = (count / total_changes) * 100 if total_changes > 0 else 0
                     writer.writerow([user, count, f"{percentage:.1f}%"])
+            
+        except Exception as e:
+            print(f"Error during CSV export: {e}")
+            print(f"Attempted to export to: {filename}")
+            return
         
         print(f"CSV report exported to: {filename}")
     
@@ -1213,13 +1419,23 @@ class Nobl9AccountAnalyzer:
             "summary": asdict(summary),
             "projects": [asdict(p) for p in self.projects],
             "slos": [asdict(s) for s in self.slos],
+            "composite_slos": [asdict(s) for s in self.composite_slos],
+            "composite_slo_components": [
+                {**asdict(comp), "composite_target": slo.target} 
+                for slo in self.composite_slos for comp in slo.components
+            ],
             "alert_policies": [asdict(a) for a in self.alert_policies],
             "services": [asdict(s) for s in self.services],
             "audit_logs": [asdict(a) for a in self.audit_logs]
         }
         
-        with open(filename, 'w', encoding='utf-8') as jsonfile:
-            json.dump(export_data, jsonfile, indent=2, ensure_ascii=False)
+        try:
+            with open(filename, 'w', encoding='utf-8') as jsonfile:
+                json.dump(export_data, jsonfile, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Error during JSON export: {e}")
+            print(f"Attempted to export to: {filename}")
+            return
         
         print(f"JSON report exported to: {filename}")
     
@@ -1245,49 +1461,64 @@ class Nobl9AccountAnalyzer:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"nobl9_account_analysis_{self.context_name}_{timestamp}.xlsx"
         
-        # Create Excel writer
-        with pd.ExcelWriter(filename, engine='openpyxl') as writer:
-            # Summary sheet
-            summary_data = {
-                'Metric': ['Generated', 'Organization', 'Total Projects', 'Total SLOs', 'Total SLO Units', 'Total Services', 
-                          'Total Alert Policies', 'Total Data Sources', 'Total Users', 'SLO Coverage', 'Last 7 Days Changes'],
-                'Value': [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), self.organization_id,
-                         summary.total_projects, summary.total_slos, summary.total_slo_units, summary.total_services,
-                         summary.total_alert_policies, summary.total_data_sources, summary.total_users,
-                         f"{summary.slo_coverage:.1f}%", summary.last_7_days_changes]
-            }
-            summary_df = pd.DataFrame(summary_data)
-            # Clean up empty/None values to prevent empty columns
-            summary_df = summary_df.replace(['', 'None', 'NaN', 'nan'], pd.NA).dropna(axis=1, how='all')
-            # Ensure we only have the expected columns
-            summary_df = summary_df[['Metric', 'Value']]
-            summary_df.to_excel(writer, sheet_name='Summary', index=False)
-            self._auto_adjust_column_widths(writer, 'Summary', summary_df)
-            
-            # Projects sheet
-            projects_data = []
-            for project in self.projects:
-                projects_data.append({
-                    'Name': project.name,
-                    'Display Name': project.display_name,
-                    'Description': project.description,
-                    'SLOs': project.slo_count,
-                    'Services': project.service_count,
-                    'Alert Policies': project.alert_policy_count,
-                    'Created At': project.created_at
-                })
-            projects_df = pd.DataFrame(projects_data)
-            # Clean up empty/None values to prevent empty columns
-            projects_df = projects_df.replace(['', 'None'], pd.NA).dropna(axis=1, how='all')
-            projects_df.to_excel(writer, sheet_name='Projects', index=False)
-            self._auto_adjust_column_widths(writer, 'Projects', projects_df)
-            
-            # SLOs sheet
-            slos_data = []
-            for slo in self.slos:
-                if slo.alert_policies:
-                    # Create a row for each alert policy
-                    for policy in slo.alert_policies:
+        try:
+            # Create Excel writer
+            with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+                # Summary sheet
+                summary_data = {
+                    'Metric': ['Generated', 'Organization', 'Total Projects', 'Total SLOs', 'Total SLO Units', 'Total Composite SLOs', 'Total Composite Components', 'Total Services', 
+                              'Total Alert Policies', 'Total Data Sources', 'Total Users', 'SLO Coverage', 'Last 7 Days Changes'],
+                    'Value': [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), self.organization_id,
+                             summary.total_projects, summary.total_slos, summary.total_slo_units, summary.total_composite_slos, summary.total_composite_components, summary.total_services,
+                             summary.total_alert_policies, summary.total_data_sources, summary.total_users,
+                             f"{summary.slo_coverage:.1f}%", summary.last_7_days_changes]
+                }
+                summary_df = pd.DataFrame(summary_data)
+                # Clean up empty/None values to prevent empty columns
+                summary_df = summary_df.replace(['', 'None', 'NaN', 'nan'], pd.NA).dropna(axis=1, how='all')
+                # Ensure we only have the expected columns
+                summary_df = summary_df[['Metric', 'Value']]
+                summary_df.to_excel(writer, sheet_name='Summary', index=False)
+                self._auto_adjust_column_widths(writer, 'Summary', summary_df)
+                
+                # Projects sheet
+                projects_data = []
+                for project in self.projects:
+                    projects_data.append({
+                        'Name': project.name,
+                        'Display Name': project.display_name,
+                        'Description': project.description,
+                        'SLOs': project.slo_count,
+                        'Services': project.service_count,
+                        'Alert Policies': project.alert_policy_count,
+                        'Created At': project.created_at
+                    })
+                projects_df = pd.DataFrame(projects_data)
+                # Clean up empty/None values to prevent empty columns
+                projects_df = projects_df.replace(['', 'None'], pd.NA).dropna(axis=1, how='all')
+                projects_df.to_excel(writer, sheet_name='Projects', index=False)
+                self._auto_adjust_column_widths(writer, 'Projects', projects_df)
+                
+                # SLOs sheet
+                slos_data = []
+                for slo in self.slos:
+                    if slo.alert_policies:
+                        # Create a row for each alert policy
+                        for policy in slo.alert_policies:
+                            slos_data.append({
+                                'Name': slo.name,
+                                'Project': slo.project,
+                                'Service': slo.service,
+                                'Description': slo.description,
+                                'Target': slo.target,
+                                'Time Window': slo.time_window,
+                                'Alert Policy': policy,
+                                'Health Status': slo.health_status,
+                                'Created At': slo.created_at,
+                                'Updated At': slo.updated_at
+                            })
+                    else:
+                        # SLO with no alert policies
                         slos_data.append({
                             'Name': slo.name,
                             'Project': slo.project,
@@ -1295,111 +1526,150 @@ class Nobl9AccountAnalyzer:
                             'Description': slo.description,
                             'Target': slo.target,
                             'Time Window': slo.time_window,
-                            'Alert Policy': policy,
+                            'Alert Policy': 'None',
                             'Health Status': slo.health_status,
                             'Created At': slo.created_at,
                             'Updated At': slo.updated_at
                         })
+                
+                slos_df = pd.DataFrame(slos_data)
+                # Clean up empty/None values to prevent empty columns
+                slos_df = slos_df.replace(['', 'None', '[]', 'unknown'], pd.NA).dropna(axis=1, how='all')
+                slos_df.to_excel(writer, sheet_name='SLOs', index=False)
+                self._auto_adjust_column_widths(writer, 'SLOs', slos_df)
+                
+                # Composite SLOs sheet
+                if self.composite_slos:
+                    composite_slos_data = []
+                    for slo in self.composite_slos:
+                        alert_policies_str = ", ".join(slo.alert_policies) if slo.alert_policies else "None"
+                        composite_slos_data.append({
+                            'Name': slo.name,
+                            'Project': slo.project,
+                            'Description': slo.description,
+                            'Component Count': slo.component_count,
+                            'Target': slo.target,
+                            'Time Window': slo.time_window,
+                            'Alert Policies': alert_policies_str,
+                            'Health Status': slo.health_status,
+                            'Created At': slo.created_at,
+                            'Updated At': slo.updated_at
+                        })
+                    
+                    composite_slos_df = pd.DataFrame(composite_slos_data)
+                    # Clean up empty/None values to prevent empty columns
+                    composite_slos_df = composite_slos_df.replace(['', 'None', '[]', 'unknown'], pd.NA).dropna(axis=1, how='all')
+                    composite_slos_df.to_excel(writer, sheet_name='Composite SLOs', index=False)
+                    self._auto_adjust_column_widths(writer, 'Composite SLOs', composite_slos_df)
+                    
+                    # Composite SLO Components sheet
+                    components_data = []
+                    for slo in self.composite_slos:
+                        for comp in slo.components:
+                            when_delayed_str = comp.when_delayed if comp.when_delayed else "N/A"
+                            components_data.append({
+                                'Composite SLO': slo.name,
+                                'Project': slo.project,
+                                'Component Name': comp.name,
+                                'Weight': comp.weight,
+                                'Normalized Weight': comp.normalized_weight,
+                                'When Delayed': when_delayed_str,
+                                'Composite Target': slo.target if slo.target is not None else "N/A"
+                            })
+                    
+                    components_df = pd.DataFrame(components_data)
+                    # Clean up empty/None values to prevent empty columns
+                    components_df = components_df.replace(['', 'None', '[]', 'unknown'], pd.NA).dropna(axis=1, how='all')
+                    components_df.to_excel(writer, sheet_name='Composite SLO Components', index=False)
+                    self._auto_adjust_column_widths(writer, 'Composite SLO Components', components_df)
                 else:
-                    # SLO with no alert policies
-                    slos_data.append({
-                        'Name': slo.name,
-                        'Project': slo.project,
-                        'Service': slo.service,
-                        'Description': slo.description,
-                        'Target': slo.target,
-                        'Time Window': slo.time_window,
-                        'Alert Policy': 'None',
-                        'Health Status': slo.health_status,
-                        'Created At': slo.created_at,
-                        'Updated At': slo.updated_at
-                    })
-            
-            slos_df = pd.DataFrame(slos_data)
-            # Clean up empty/None values to prevent empty columns
-            slos_df = slos_df.replace(['', 'None', '[]', 'unknown'], pd.NA).dropna(axis=1, how='all')
-            slos_df.to_excel(writer, sheet_name='SLOs', index=False)
-            self._auto_adjust_column_widths(writer, 'SLOs', slos_df)
-            
-            # Alert Policies sheet
-            policies_data = []
-            for policy in self.alert_policies:
-                policies_data.append({
-                    'Name': policy.name,
-                    'Project': policy.project,
-                    'Description': policy.description,
-                    'Severity': policy.severity,
-                    'Used by SLOs': policy.used_by_slos
-                })
-            policies_df = pd.DataFrame(policies_data)
-            policies_df.to_excel(writer, sheet_name='Alert Policies', index=False)
-            self._auto_adjust_column_widths(writer, 'Alert Policies', policies_df)
-            
-            # Services sheet
-            services_data = []
-            for service in self.services:
-                services_data.append({
-                    'Name': service.name,
-                    'Project': service.project,
-                    'Description': service.description,
-                    'SLO Count': service.slo_count
-                })
-            services_df = pd.DataFrame(services_data)
-            # Clean up empty/None values to prevent empty columns
-            services_df = services_df.replace(['', 'None'], pd.NA).dropna(axis=1, how='all')
-            services_df.to_excel(writer, sheet_name='Services', index=False)
-            self._auto_adjust_column_widths(writer, 'Services', services_df)
-            
-            # SLOs without Alert Policies section
-            slos_without_policies = [slo for slo in self.slos if not slo.alert_policies]
-            if slos_without_policies:
-                uncovered_slos_data = []
-                for slo in slos_without_policies:
-                    uncovered_slos_data.append({
-                        'Service': slo.service,
-                        'SLO Name': slo.name,
-                        'Project': slo.project,
-                        'Description': slo.description
-                    })
-                uncovered_df = pd.DataFrame(uncovered_slos_data)
-                uncovered_df.to_excel(writer, sheet_name='SLOs without Alert Policies', index=False)
-                self._auto_adjust_column_widths(writer, 'SLOs without Alert Policies', uncovered_df)
-            
-            # Unused Alert Policies section
-            unused_policies = [p for p in self.alert_policies if p.used_by_slos == 0]
-            if unused_policies:
-                unused_policies_data = []
-                for policy in unused_policies:
-                    unused_policies_data.append({
+                    pass
+        
+                # Alert Policies sheet
+                policies_data = []
+                for policy in self.alert_policies:
+                    policies_data.append({
                         'Name': policy.name,
                         'Project': policy.project,
                         'Description': policy.description,
-                        'Severity': policy.severity
+                        'Severity': policy.severity,
+                        'Used by SLOs': policy.used_by_slos
                     })
-                unused_df = pd.DataFrame(unused_policies_data)
-                unused_df.to_excel(writer, sheet_name='Unused Alert Policies', index=False)
-                self._auto_adjust_column_widths(writer, 'Unused Alert Policies', unused_df)
-            
-            # Top Services by SLO Count section
-            if self.services:
-                services_by_slo_count = sorted(self.services, key=lambda x: x.slo_count, reverse=True)
-                top_services_data = []
-                for i, service in enumerate(services_by_slo_count[:20], 1):  # Top 20
-                    top_services_data.append({
-                        'Rank': i,
-                        'Service Name': service.name,
+                policies_df = pd.DataFrame(policies_data)
+                policies_df.to_excel(writer, sheet_name='Alert Policies', index=False)
+                self._auto_adjust_column_widths(writer, 'Alert Policies', policies_df)
+                
+                # Services sheet
+                services_data = []
+                for service in self.services:
+                    services_data.append({
+                        'Name': service.name,
                         'Project': service.project,
-                        'SLO Count': service.slo_count,
-                        'Description': service.description
+                        'Description': service.description,
+                        'SLO Count': service.slo_count
                     })
-                top_services_df = pd.DataFrame(top_services_data)
-                top_services_df.to_excel(writer, sheet_name='Top Services by SLO Count', index=False)
-                self._auto_adjust_column_widths(writer, 'Top Services by SLO Count', top_services_df)
-            
-            # Data Source Analysis sheet
-            if hasattr(self, '_slo_lookup') and self._slo_lookup:
-                # Get all data sources
-                agents = self._get_data_sources("agents")
+                services_df = pd.DataFrame(services_data)
+                # Clean up empty/None values to prevent empty columns
+                services_df = services_df.replace(['', 'None'], pd.NA).dropna(axis=1, how='all')
+                services_df.to_excel(writer, sheet_name='Services', index=False)
+                self._auto_adjust_column_widths(writer, 'Services', services_df)
+                
+                # SLOs without Alert Policies section
+                slos_without_policies = [slo for slo in self.slos if not slo.alert_policies]
+                if slos_without_policies:
+                    uncovered_slos_data = []
+                    for slo in slos_without_policies:
+                        uncovered_slos_data.append({
+                            'Service': slo.service,
+                            'SLO Name': slo.name,
+                            'Project': slo.project,
+                            'Description': slo.description
+                        })
+                    uncovered_df = pd.DataFrame(uncovered_slos_data)
+                    uncovered_df.to_excel(writer, sheet_name='SLOs without Alert Policies', index=False)
+                    self._auto_adjust_column_widths(writer, 'SLOs without Alert Policies', uncovered_df)
+                else:
+                    pass
+                
+                # Unused Alert Policies section
+                unused_policies = [p for p in self.alert_policies if p.used_by_slos == 0]
+                if unused_policies:
+                    unused_policies_data = []
+                    for policy in unused_policies:
+                        unused_policies_data.append({
+                            'Name': policy.name,
+                            'Project': policy.project,
+                            'Description': policy.description,
+                            'Severity': policy.severity
+                        })
+                    unused_df = pd.DataFrame(unused_policies_data)
+                    unused_df.to_excel(writer, sheet_name='Unused Alert Policies', index=False)
+                    self._auto_adjust_column_widths(writer, 'Unused Alert Policies', unused_df)
+                else:
+                    pass
+                
+                # Top Services by SLO Count section
+                if self.services:
+                    services_by_slo_count = sorted(self.services, key=lambda x: x.slo_count, reverse=True)
+                    top_services_data = []
+                    for i, service in enumerate(services_by_slo_count[:20], 1):  # Top 20
+                        top_services_data.append({
+                            'Rank': i,
+                            'Service Name': service.name,
+                            'Project': service.project,
+                            'SLO Count': service.slo_count,
+                            'Description': service.description
+                        })
+                    top_services_df = pd.DataFrame(top_services_data)
+                    top_services_df.to_excel(writer, sheet_name='Top Services by SLO Count', index=False)
+                    self._auto_adjust_column_widths(writer, 'Top Services by SLO Count', top_services_df)
+                else:
+                    pass
+                
+                # Data Source Analysis sheet
+                if hasattr(self, '_slo_lookup') and self._slo_lookup:
+                    # Get all data sources
+                    agents = self._get_data_sources("agents")
                 directs = self._get_data_sources("directs")
                 all_data_sources = {**agents, **directs}
                 
@@ -1450,6 +1720,8 @@ class Nobl9AccountAnalyzer:
                     source_df = pd.DataFrame(source_analysis_data)
                     source_df.to_excel(writer, sheet_name='Data Source Analysis', index=False)
                     self._auto_adjust_column_widths(writer, 'Data Source Analysis', source_df)
+                else:
+                    pass
             
             # Time Window Analysis sheet
             if self.slos:
@@ -1513,6 +1785,8 @@ class Nobl9AccountAnalyzer:
                     time_window_df = pd.DataFrame(time_window_data)
                     time_window_df.to_excel(writer, sheet_name='Time Window Analysis', index=False)
                     self._auto_adjust_column_widths(writer, 'Time Window Analysis', time_window_df)
+                else:
+                    pass
             
             # Recent SLO Changes sheet
             slos_with_updates = [slo for slo in self.slos if slo.updated_at]
@@ -1581,6 +1855,8 @@ class Nobl9AccountAnalyzer:
                 recent_df = pd.DataFrame(recent_changes_data)
                 recent_df.to_excel(writer, sheet_name='Recent SLO Changes', index=False)
                 self._auto_adjust_column_widths(writer, 'Recent SLO Changes', recent_df)
+            else:
+                pass
             
             # Top 10 Most Active Users sheet
             if summary.top_active_users:
@@ -1600,6 +1876,8 @@ class Nobl9AccountAnalyzer:
                 top_users_df = top_users_df[[col for col in expected_cols if col in top_users_df.columns]]
                 top_users_df.to_excel(writer, sheet_name='Top 10 Most Active Users', index=False)
                 self._auto_adjust_column_widths(writer, 'Top 10 Most Active Users', top_users_df)
+            else:
+                pass
             
             # Audit Trail Summary sheet
             if summary.top_active_users:
@@ -1645,8 +1923,60 @@ class Nobl9AccountAnalyzer:
                     event_df = event_df[[col for col in expected_cols if col in event_df.columns]]
                     event_df.to_excel(writer, sheet_name='Event Types', index=False)
                     self._auto_adjust_column_widths(writer, 'Event Types', event_df)
+                else:
+                    pass
+            else:
+                pass
+            
+        except Exception as e:
+            print(f"Error during Excel export: {e}")
+            print(f"Attempted to export to: {filename}")
+            return
         
         print(f"Excel report exported to: {filename}")
+        print("Note: Some sheets may be skipped if no relevant data is found (e.g., no unused alert policies, no audit trail data)")
+    
+    def _export_yaml(self, summary: AccountSummary):
+        """Export organization SLOs to YAML format using sloctl"""
+        print()
+        print_header("YAML EXPORT")
+        print_colored("Retrieving organization SLOs in YAML format...", colorama.Fore.CYAN)
+        
+        try:
+            # Use sloctl to get all SLOs in YAML format
+            result = subprocess.run(
+                ["sloctl", "get", "slos", "-A", "-o", "yaml"],
+                capture_output=True, text=True, check=True
+            )
+            
+            if not result.stdout.strip():
+                print_colored("No SLOs found or empty response from sloctl", colorama.Fore.YELLOW)
+                return
+            
+            # Create timestamped filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"nobl9_slos_{self.context_name}_{timestamp}.yaml"
+            
+            # Write YAML to file
+            with open(filename, 'w') as f:
+                f.write(result.stdout)
+            
+            print_colored(f"✓ YAML export completed successfully!", colorama.Fore.GREEN)
+            print_colored(f"File: {filename}", colorama.Fore.WHITE)
+            print_colored(f"Total SLOs exported: {len(self.slos)}", colorama.Fore.WHITE)
+            
+            # Show a preview of the YAML content
+            print()
+            print_colored("YAML Preview (first 500 characters):", colorama.Fore.CYAN)
+            print_colored("-" * 50, colorama.Fore.CYAN)
+            preview = result.stdout[:500].replace('\n', '\n  ')
+            print_colored(f"  {preview}...", colorama.Fore.WHITE)
+            
+        except subprocess.CalledProcessError as e:
+            print_colored(f"❌ Error running sloctl command: {e}", colorama.Fore.RED)
+            print_colored("Make sure sloctl is properly configured and accessible", colorama.Fore.YELLOW)
+        except Exception as e:
+            print_colored(f"❌ Error during YAML export: {e}", colorama.Fore.RED)
     
     def _get_data_sources(self, source_type):
         """Get data sources (agents or directs) and map names to types"""
@@ -1655,6 +1985,12 @@ class Nobl9AccountAnalyzer:
                 ["sloctl", "get", source_type, "-A", "-o", "json"],
                 capture_output=True, text=True, check=True
             )
+            
+            # Check if stdout is empty
+            if not result.stdout.strip():
+                print(f"No {source_type} found or empty response from sloctl")
+                return {}
+            
             data = json.loads(result.stdout)
             if isinstance(data, list):
                 source_map = {}
@@ -1731,11 +2067,16 @@ class Nobl9AccountAnalyzer:
             return {}
         except json.JSONDecodeError as e:
             print(f"Error parsing JSON for {source_type}: {e}")
+            print(f"Raw output: {result.stdout[:200]}...")
             return {}
 
-    def run_analysis(self, output_format: str = "console", audit_days: int = 7):
+    def run_analysis(self, output_format: str = "console", audit_days: int = 7, context_name: str = None):
         """Run complete account analysis"""
         print("Starting Nobl9 Account Analysis...")
+        
+        # Setup authentication with specified context
+        self._setup_authentication(context_name)
+        
         print(f"Organization: {self.organization_id}")
         print()
         
@@ -1771,10 +2112,7 @@ class Nobl9AccountAnalyzer:
         }
         
         try:
-            if self.is_custom_instance:
-                url = f"{self.base_url}/api/reports/v1/usage-summary"
-            else:
-                url = "https://app.nobl9.com/api/reports/v1/usage-summary"
+            url = f"{self.base_url}/reports/v1/usage-summary"
             
             response = requests.get(url, headers=headers, timeout=30)
             
@@ -1806,11 +2144,12 @@ class Nobl9AccountAnalyzer:
         print_colored("  [1] CSV - Comma-separated values", colorama.Fore.WHITE)
         print_colored("  [2] JSON - JavaScript Object Notation", colorama.Fore.WHITE)
         print_colored("  [3] Excel - Multi-tab spreadsheet (.xlsx)", colorama.Fore.WHITE)
-        print_colored("  [4] Exit - No export", colorama.Fore.WHITE)
+        print_colored("  [4] YAML - Organization SLOs in YAML format", colorama.Fore.WHITE)
+        print_colored("  [5] Exit - No export", colorama.Fore.WHITE)
         print()
         
         try:
-            choice = input("Select export format (1-4): ").strip()
+            choice = input("Select export format (1-5): ").strip()
             
             if choice == "1":
                 self._export_csv(summary)
@@ -1819,6 +2158,8 @@ class Nobl9AccountAnalyzer:
             elif choice == "3":
                 self._export_excel(summary)
             elif choice == "4":
+                self._export_yaml(summary)
+            elif choice == "5":
                 print_colored("Exiting without export. Goodbye!", colorama.Fore.GREEN)
                 return
             else:
@@ -1843,18 +2184,27 @@ def main():
         epilog="""
 Examples:
   python3 account_analyzer.py                           # Console report
+  python3 account_analyzer.py --context prod-us1        # Use specific context
   python3 account_analyzer.py --format csv              # CSV export
   python3 account_analyzer.py --format json             # JSON export
   python3 account_analyzer.py --format excel            # Excel export
+  python3 account_analyzer.py --format yaml             # YAML export
+  python3 account_analyzer.py --context staging-eu1 --format excel  # Context + format
   python3 account_analyzer.py --audit-days 30           # 30 days of audit data
         """
     )
     
     parser.add_argument(
         "--format", "-f",
-        choices=["console", "csv", "json", "excel"],
+        choices=["console", "csv", "json", "excel", "yaml"],
         default="console",
         help="Output format (default: console)"
+    )
+    
+    parser.add_argument(
+        "--context", "-c",
+        type=str,
+        help="Nobl9 context name to use (e.g., 'prod-us1')"
     )
     
     parser.add_argument(
@@ -1868,7 +2218,7 @@ Examples:
     
     try:
         analyzer = Nobl9AccountAnalyzer()
-        analyzer.run_analysis(output_format=args.format, audit_days=args.audit_days)
+        analyzer.run_analysis(output_format=args.format, audit_days=args.audit_days, context_name=args.context)
         
     except KeyboardInterrupt:
         print("\nAnalysis interrupted by user")
