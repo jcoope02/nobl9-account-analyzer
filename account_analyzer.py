@@ -586,9 +586,15 @@ class Nobl9AccountAnalyzer:
             end_time = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
             
             while True:
+                # Handle different base URL formats for custom instances
                 if self.is_custom_instance:
-                    url = f"{self.audit_base_url}/api/audit/v1/logs"
+                    # For custom instances, check if base_url already includes /api
+                    if self.audit_base_url.endswith('/api'):
+                        url = f"{self.audit_base_url}/audit/v1/logs"
+                    else:
+                        url = f"{self.audit_base_url}/api/audit/v1/logs"
                 else:
+                    # Standard Nobl9 instance
                     url = f"{self.audit_base_url}/api/audit/v1/logs"
                 
                 params = {
@@ -633,7 +639,10 @@ class Nobl9AccountAnalyzer:
                     break
             
             self.audit_logs = all_logs
-            print("Collected audit logs")
+            if all_logs:
+                print(f"Collected {len(all_logs)} audit log entries")
+            else:
+                print("No audit logs collected (may require additional permissions)")
             
         except Exception as e:
             print(f"Error collecting audit logs: {e}")
@@ -694,7 +703,7 @@ class Nobl9AccountAnalyzer:
         
         # Process all SLO data in a single pass
         data_source_analysis = {}
-        total_data_sources = 0
+        unique_data_sources = set()  # Track unique data sources
         
         for slo in self.slos:
             raw_slo_data = slo_lookup.get((slo.name, slo.project))
@@ -709,7 +718,7 @@ class Nobl9AccountAnalyzer:
                     source_kind = metric_source.get("kind", "")
                     
                     if source_name and "unknown" not in source_name.lower():
-                        total_data_sources += 1
+                        unique_data_sources.add(source_name)  # Add to set of unique sources
                         
                         # Build data source analysis in the same pass
                         if source_name not in data_source_analysis:
@@ -788,7 +797,7 @@ class Nobl9AccountAnalyzer:
             total_services=len(self.services),
             total_alert_policies=len(self.alert_policies),
             total_alerts=0,  # Will be implemented later
-            total_data_sources=total_data_sources,
+            total_data_sources=len(unique_data_sources),
             slo_coverage=slo_coverage,
             top_active_users=top_users,
             most_active_project=most_active_project,
@@ -1100,14 +1109,6 @@ class Nobl9AccountAnalyzer:
         # SLO Objective Analysis
         print_header("TIME WINDOW ANALYSIS")
         if self.slos:
-            # Target value analysis
-            targets = [slo.target for slo in self.slos if slo.target > 0]
-            if targets:
-                avg_target = sum(targets) / len(targets)
-                min_target = min(targets)
-                max_target = max(targets)
-                print_colored(f"Target Values: Avg={avg_target:.3f}, Min={min_target:.3f}, Max={max_target:.3f}", colorama.Fore.WHITE)
-            
             # Detailed time window analysis
             time_window_details = {}
             calendar_aligned = 0
@@ -1249,7 +1250,7 @@ class Nobl9AccountAnalyzer:
             writer.writerow(["Total Alert Policies", summary.total_alert_policies])
             writer.writerow(["Total Data Sources", summary.total_data_sources])
             writer.writerow(["Total Users", summary.total_users])
-            writer.writerow(["SLO Coverage", f"{summary.slo_coverage:.1f}%"])
+            writer.writerow(["Alert Coverage", f"{summary.slo_coverage:.1f}%"])
             writer.writerow(["Last 7 Days Changes", summary.last_7_days_changes])
             
             # Projects section
@@ -1467,7 +1468,7 @@ class Nobl9AccountAnalyzer:
                 # Summary sheet
                 summary_data = {
                     'Metric': ['Generated', 'Organization', 'Total Projects', 'Total SLOs', 'Total SLO Units', 'Total Composite SLOs', 'Total Composite Components', 'Total Services', 
-                              'Total Alert Policies', 'Total Data Sources', 'Total Users', 'SLO Coverage', 'Last 7 Days Changes'],
+                              'Total Alert Policies', 'Total Data Sources', 'Total Users', 'Alert Coverage', 'Last 7 Days Changes'],
                     'Value': [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), self.organization_id,
                              summary.total_projects, summary.total_slos, summary.total_slo_units, summary.total_composite_slos, summary.total_composite_components, summary.total_services,
                              summary.total_alert_policies, summary.total_data_sources, summary.total_users,
@@ -1991,6 +1992,11 @@ class Nobl9AccountAnalyzer:
                 print(f"No {source_type} found or empty response from sloctl")
                 return {}
             
+            # Check for "No resources found" message
+            if "No resources found" in result.stdout:
+                print(f"No {source_type} found in any project")
+                return {}
+            
             data = json.loads(result.stdout)
             if isinstance(data, list):
                 source_map = {}
@@ -2107,19 +2113,43 @@ class Nobl9AccountAnalyzer:
         
         headers = {
             "Authorization": f"Bearer {self.access_token}",
-            "Accept": "application/json; version=v1alpha",
+            "Accept": "application/json",
             "Organization": self.organization_id
         }
         
         try:
-            url = f"{self.base_url}/reports/v1/usage-summary"
+            # Handle different base URL formats for custom instances
+            if self.is_custom_instance:
+                # For custom instances, check if base_url already includes /api
+                if self.base_url.endswith('/api'):
+                    url = f"{self.base_url}/reports/v1/usage-summary"
+                else:
+                    url = f"{self.base_url}/api/reports/v1/usage-summary"
+            else:
+                # Standard Nobl9 instance
+                url = f"{self.base_url}/api/reports/v1/usage-summary"
             
             response = requests.get(url, headers=headers, timeout=30)
             
             if response.status_code == 200:
-                data = response.json()
-                print("Collected usage summary")
-                return data
+                # Check if response has content before trying to parse JSON
+                if not response.text.strip():
+                    print("⚠ Usage summary API returned empty response")
+                    return {}
+                
+                try:
+                    data = response.json()
+                    print("Collected usage summary")
+                    return data
+                except ValueError as json_error:
+                    # Check if response is HTML (likely a redirect to login page)
+                    if response.headers.get('content-type', '').startswith('text/html'):
+                        print("⚠ Usage summary API returned HTML instead of JSON - likely requires different permissions")
+                        print("  This may indicate the Reports API is not accessible with current token")
+                    else:
+                        print(f"⚠ Failed to parse usage summary JSON: {json_error}")
+                        print(f"Raw response: {response.text[:200]}...")
+                    return {}
             elif response.status_code == 401:
                 print("⚠ Authentication failed for usage summary API")
                 return {}
@@ -2128,6 +2158,8 @@ class Nobl9AccountAnalyzer:
                 return {}
             else:
                 print(f"⚠ Failed to get usage summary: {response.status_code}")
+                if response.text:
+                    print(f"Response: {response.text[:200]}...")
                 return {}
                 
         except Exception as e:

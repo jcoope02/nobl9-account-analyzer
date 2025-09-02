@@ -16,10 +16,10 @@ The Nobl9 Account Analyzer is designed to help organizations understand and opti
 - **Data Source Analysis**: Breakdown of monitoring tools and data source utilization
 
 ### Advanced Analytics
-- **SLO Objective Analysis**: Target value distributions and time window patterns
+- **Time Window Analysis**: Time window distribution patterns and rolling vs calendar-aligned windows
 - **Recent Changes Tracking**: Most recently updated SLOs with timestamps
 - **Audit Trail Analysis**: User activity patterns and change breakdowns
-- **Resource Utilization**: Official usage metrics from Nobl9 Reports API
+- **Resource Utilization**: Official usage metrics from Nobl9 Reports API (SLO Units, Users, Data Sources)
 
 ### Export Capabilities
 - **Console Output**: Formatted, colorized terminal display
@@ -240,10 +240,10 @@ The tool is optimized for efficiency:
 
 ## Limitations
 
-- Audit log analysis requires appropriate permissions
+- Audit log analysis requires appropriate permissions (403 errors are handled gracefully)
 - Some features may be limited in trial accounts
 - Large organizations may experience longer processing times
-- Custom instance configurations require proper URL setup
+- Custom instance configurations are now fully supported with automatic URL detection
 
 ## Troubleshooting
 
@@ -292,9 +292,26 @@ For issues related to:
 
 This tool is provided as-is for analysis purposes. Ensure compliance with your organization's security and data handling policies.
 
+## Recent Improvements
+
+### v1.4 - Enhanced Reliability and Accuracy
+- **Fixed SLO Units Display**: Corrected API URL path to properly retrieve usage metrics
+- **Improved Data Source Counting**: Fixed calculation to show unique data sources instead of SLO count
+- **Enhanced Custom Instance Support**: Robust URL handling for non-standard Nobl9 deployments
+- **Better Error Messages**: Clearer audit log collection status and API error reporting
+- **Consistent Terminology**: Standardized "Alert Coverage" across all export formats
+- **Cleaner Output**: Removed unnecessary target value statistics from time window analysis
+
+### Key Fixes
+- ✅ **SLO Units**: Now correctly displays actual billing units (e.g., 255 instead of 0)
+- ✅ **Custom URLs**: Handles various base URL formats for enterprise deployments
+- ✅ **Error Clarity**: Clear success/failure messages for audit log collection
+- ✅ **Export Consistency**: "Alert Coverage" terminology updated
+
 ## Version History
 
 - **v1.0**: Initial release with core analysis features
 - **v1.1**: Added Excel export and enhanced data source analysis
 - **v1.2**: Integrated Nobl9 Reports API and improved efficiency
 - **v1.3**: Enhanced error handling and added interactive export options
+- **v1.4**: Fixed critical metrics display and improved reliability
