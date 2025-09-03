@@ -38,6 +38,29 @@ def print_header(text: str) -> None:
     print_colored(f"\n{text}", colorama.Fore.CYAN)
     print_colored("=" * len(text), colorama.Fore.CYAN)
 
+def print_section_header(text: str) -> None:
+    """Print a section header with consistent formatting."""
+    print_colored(f"\n{text}", colorama.Fore.CYAN)
+    print_colored("=" * len(text), colorama.Fore.CYAN)
+
+def print_metric(label: str, value: str, color: str = colorama.Fore.WHITE) -> None:
+    """Print a metric with consistent formatting."""
+    print_colored(f"{label}: {value}", color)
+
+def print_table_header(headers: List[str], widths: List[int] = None) -> None:
+    """Print a table header with consistent formatting."""
+    if widths is None:
+        widths = [len(h) + 2 for h in headers]
+    
+    header_line = ""
+    separator_line = ""
+    for i, (header, width) in enumerate(zip(headers, widths)):
+        header_line += f"{header:<{width}}"
+        separator_line += "-" * width
+    
+    print_colored(header_line, colorama.Fore.WHITE)
+    print_colored(separator_line, colorama.Fore.CYAN)
+
 # Data structures for analysis
 @dataclass
 class ProjectInfo:
@@ -443,12 +466,17 @@ class Nobl9AccountAnalyzer:
                         
                         # Parse component details
                         for comp_obj in component_objectives:
+                            comp_project = comp_obj.get('project', '')
+                            comp_slo = comp_obj.get('slo', '')
+                            comp_objective = comp_obj.get('objective', '')
+
+                            
                             component = CompositeSLOComponent(
-                                name=f"{comp_obj.get('project', '')}/{comp_obj.get('slo', '')}/{comp_obj.get('objective', '')}",
+                                name=comp_slo,  # Just use the SLO name, not the full path
                                 weight=comp_obj.get("weight", 0.0),
                                 normalized_weight=comp_obj.get("weight", 0.0),  # Will calculate normalized weight later
                                 when_delayed=comp_obj.get("whenDelayed", ""),
-                                target=comp_obj.get("target", 0.0)
+                                target=comp_obj.get("target", 0.0)  # Get target directly from component data
                             )
                             composite_components.append(component)
                 
@@ -483,6 +511,8 @@ class Nobl9AccountAnalyzer:
                         updated_at=item.get("status", {}).get("updatedAt", "")
                     )
                     self.composite_slos.append(composite_slo)
+                    
+
                 
                 # Regular SLO collection (existing code)
                 # Get target from objectives if available, otherwise from spec
@@ -511,6 +541,24 @@ class Nobl9AccountAnalyzer:
         
         print(f"Collected SLOs (Total: {len(self.slos)}, Composite: {len(self.composite_slos)})")
     
+
+
+    def _get_component_target(self, component_name):
+        """Get the target for a component by looking it up in both regular and composite SLOs"""
+        # Create a simple lookup dictionary for faster access
+        slo_targets = {}
+        
+        # Build lookup dictionary from regular SLOs
+        for slo in self.slos:
+            slo_targets[slo.name] = slo.target
+        
+        # Build lookup dictionary from composite SLOs
+        for slo in self.composite_slos:
+            slo_targets[slo.name] = slo.target
+        
+        # Return the target if found, otherwise 0.0
+        return slo_targets.get(component_name, 0.0)
+
     def collect_alert_policies(self):
         """Collect all alert policies from all projects"""
         print("Collecting alert policies...")
@@ -917,31 +965,34 @@ class Nobl9AccountAnalyzer:
             print_header("DETAILED COMPOSITE SLO BREAKDOWN")
             for slo in sorted(self.composite_slos, key=lambda x: x.component_count, reverse=True):
                 print_colored(f"• {slo.name} ({slo.project}) - {slo.component_count} components", colorama.Fore.CYAN)
+                print_colored(f"    Target: {slo.target:.6f}", colorama.Fore.WHITE)
                 if slo.description:
                     # Clean up description: remove line breaks, extra spaces, and special characters
                     clean_description = slo.description.replace('\n', ' ').replace('\r', ' ').replace('•••', '...')
                     # Remove multiple consecutive spaces
                     clean_description = re.sub(r'\s+', ' ', clean_description).strip()
-                    print_colored(f"  Description: {clean_description}", colorama.Fore.WHITE)
+                    print_colored(f"    Description: {clean_description}", colorama.Fore.WHITE)
                 
                 # Show component details in a table format
                 print_colored(f"  Components:", colorama.Fore.WHITE)
-                print_colored(f"    {'Name':<75} {'Weight':<10} {'Norm Weight':<12} {'When Delayed':<15} {'Composite Target':<18}", colorama.Fore.CYAN)
+                print_colored(f"    {'Name':<75} {'Weight':<10} {'Norm Weight':<12} {'When Delayed':<15} {'Component Target':<18}", colorama.Fore.CYAN)
                 print_colored(f"    {'-' * 75} {'-' * 10} {'-' * 12} {'-' * 15} {'-' * 18}", colorama.Fore.CYAN)
                 for comp in slo.components:
                     when_delayed_str = comp.when_delayed if comp.when_delayed else "N/A"
                     weight_str = f"{comp.weight:.2f}" if comp.weight else "N/A"
                     norm_weight_str = f"{comp.normalized_weight:.2f}" if comp.normalized_weight else "N/A"
-                    composite_target_str = f"{slo.target:.6f}" if slo.target else "N/A"
+                    # Look up the component target using the shared method
+                    component_target = self._get_component_target(comp.name)
+                    component_target_str = f"{component_target:.6f}" if component_target is not None else "N/A"
                     
                     # Truncate long names and add ellipsis if needed
                     display_name = comp.name
                     if len(display_name) > 73:
                         display_name = display_name[:70] + "..."
                     
-                    # Print component data with composite target in grey
+                    # Print component data with component target in grey
                     print_colored(f"    {display_name:<75} {weight_str:<10} {norm_weight_str:<12} {when_delayed_str:<15} ", colorama.Fore.WHITE, end="")
-                    print_colored(f"{composite_target_str:<18}", colorama.Fore.LIGHTBLACK_EX)
+                    print_colored(f"{component_target_str:<18}", colorama.Fore.LIGHTBLACK_EX)
                 
                 if slo.alert_policies:
                     print_colored(f"  Alert Policies: {', '.join(slo.alert_policies)}", colorama.Fore.WHITE)
@@ -966,7 +1017,7 @@ class Nobl9AccountAnalyzer:
             for slo in self.slos:
                 if not slo.alert_policies:
                     if uncovered_count < 25:
-                        print_colored(f"  • {slo.service}/{slo.name} (project: {slo.project})", colorama.Fore.WHITE)
+                        print_colored(f"  • {slo.name} (project: {slo.project})", colorama.Fore.WHITE)
                         uncovered_count += 1
                     else:
                         break
@@ -1440,6 +1491,17 @@ class Nobl9AccountAnalyzer:
         
         print(f"JSON report exported to: {filename}")
     
+    def _clean_dataframe(self, df, replace_values=None):
+        """Clean DataFrame by replacing empty values and dropping empty columns"""
+        if replace_values is None:
+            replace_values = ['', 'None', '[]', 'unknown', 'NaN', 'nan']
+        # Don't drop columns if it would make the DataFrame empty
+        cleaned_df = df.replace(replace_values, pd.NA)
+        # Only drop columns if there are other columns left
+        if len(cleaned_df.columns) > 1:
+            cleaned_df = cleaned_df.dropna(axis=1, how='all')
+        return cleaned_df
+    
     def _auto_adjust_column_widths(self, writer, sheet_name, dataframe):
         """Auto-adjust column widths for an Excel sheet"""
         worksheet = writer.sheets[sheet_name]
@@ -1449,6 +1511,82 @@ class Nobl9AccountAnalyzer:
                 len(col)
             )
             worksheet.column_dimensions[chr(65 + idx)].width = min(max_length + 2, 50)
+
+    def _create_summary_sheet(self, writer, summary):
+        """Create the summary sheet in Excel export."""
+        import pandas as pd
+        summary_data = {
+            'Metric': ['Generated', 'Organization', 'Total Projects', 'Total SLOs', 'Total SLO Units', 'Total Composite SLOs', 'Total Composite Components', 'Total Services', 
+                      'Total Alert Policies', 'Total Data Sources', 'Total Users', 'Alert Coverage', 'Last 7 Days Changes'],
+            'Value': [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), self.organization_id,
+                     summary.total_projects, summary.total_slos, summary.total_slo_units, summary.total_composite_slos, summary.total_composite_components, summary.total_services,
+                     summary.total_alert_policies, summary.total_data_sources, summary.total_users,
+                     f"{summary.slo_coverage:.1f}%", summary.last_7_days_changes]
+        }
+        summary_df = pd.DataFrame(summary_data)
+        summary_df = self._clean_dataframe(summary_df, ['', 'None', 'NaN', 'nan'])
+        summary_df = summary_df[['Metric', 'Value']]
+        summary_df.to_excel(writer, sheet_name='Summary', index=False)
+        self._auto_adjust_column_widths(writer, 'Summary', summary_df)
+
+    def _create_projects_sheet(self, writer):
+        """Create the projects sheet in Excel export."""
+        import pandas as pd
+        projects_data = []
+        for project in self.projects:
+            projects_data.append({
+                'Name': project.name,
+                'Display Name': project.display_name,
+                'Description': project.description,
+                'SLOs': project.slo_count,
+                'Services': project.service_count,
+                'Alert Policies': project.alert_policy_count,
+                'Created At': project.created_at
+            })
+        projects_df = pd.DataFrame(projects_data)
+        projects_df = self._clean_dataframe(projects_df, ['', 'None'])
+        projects_df.to_excel(writer, sheet_name='Projects', index=False)
+        self._auto_adjust_column_widths(writer, 'Projects', projects_df)
+
+    def _create_slos_sheet(self, writer):
+        """Create the SLOs sheet in Excel export."""
+        import pandas as pd
+        slos_data = []
+        for slo in self.slos:
+            if slo.alert_policies:
+                # Create a row for each alert policy
+                for policy in slo.alert_policies:
+                    slos_data.append({
+                        'Name': slo.name,
+                        'Project': slo.project,
+                        'Service': slo.service,
+                        'Description': slo.description,
+                        'Target': slo.target,
+                        'Time Window': slo.time_window,
+                        'Alert Policy': policy,
+                        'Health Status': slo.health_status,
+                        'Created At': slo.created_at,
+                        'Updated At': slo.updated_at
+                    })
+            else:
+                # SLO with no alert policies
+                slos_data.append({
+                    'Name': slo.name,
+                    'Project': slo.project,
+                    'Service': slo.service,
+                    'Description': slo.description,
+                    'Target': slo.target,
+                    'Time Window': slo.time_window,
+                    'Alert Policy': 'None',
+                    'Health Status': slo.health_status,
+                    'Created At': slo.created_at,
+                    'Updated At': slo.updated_at
+                })
+        
+        slos_df = pd.DataFrame(slos_data)
+        slos_df = self._clean_dataframe(slos_df)
+        slos_df.to_excel(writer, sheet_name='SLOs', index=False)
+        self._auto_adjust_column_widths(writer, 'SLOs', slos_df)
 
     def _export_excel(self, summary: AccountSummary):
         """Export data to Excel format with comprehensive tabs"""
@@ -1475,7 +1613,6 @@ class Nobl9AccountAnalyzer:
                              f"{summary.slo_coverage:.1f}%", summary.last_7_days_changes]
                 }
                 summary_df = pd.DataFrame(summary_data)
-                # Clean up empty/None values to prevent empty columns
                 summary_df = summary_df.replace(['', 'None', 'NaN', 'nan'], pd.NA).dropna(axis=1, how='all')
                 # Ensure we only have the expected columns
                 summary_df = summary_df[['Metric', 'Value']]
@@ -1495,7 +1632,6 @@ class Nobl9AccountAnalyzer:
                         'Created At': project.created_at
                     })
                 projects_df = pd.DataFrame(projects_data)
-                # Clean up empty/None values to prevent empty columns
                 projects_df = projects_df.replace(['', 'None'], pd.NA).dropna(axis=1, how='all')
                 projects_df.to_excel(writer, sheet_name='Projects', index=False)
                 self._auto_adjust_column_widths(writer, 'Projects', projects_df)
@@ -1534,7 +1670,6 @@ class Nobl9AccountAnalyzer:
                         })
                 
                 slos_df = pd.DataFrame(slos_data)
-                # Clean up empty/None values to prevent empty columns
                 slos_df = slos_df.replace(['', 'None', '[]', 'unknown'], pd.NA).dropna(axis=1, how='all')
                 slos_df.to_excel(writer, sheet_name='SLOs', index=False)
                 self._auto_adjust_column_widths(writer, 'SLOs', slos_df)
@@ -1558,7 +1693,6 @@ class Nobl9AccountAnalyzer:
                         })
                     
                     composite_slos_df = pd.DataFrame(composite_slos_data)
-                    # Clean up empty/None values to prevent empty columns
                     composite_slos_df = composite_slos_df.replace(['', 'None', '[]', 'unknown'], pd.NA).dropna(axis=1, how='all')
                     composite_slos_df.to_excel(writer, sheet_name='Composite SLOs', index=False)
                     self._auto_adjust_column_widths(writer, 'Composite SLOs', composite_slos_df)
@@ -1568,6 +1702,10 @@ class Nobl9AccountAnalyzer:
                     for slo in self.composite_slos:
                         for comp in slo.components:
                             when_delayed_str = comp.when_delayed if comp.when_delayed else "N/A"
+                            component_target = self._get_component_target(comp.name)
+                            
+
+                            
                             components_data.append({
                                 'Composite SLO': slo.name,
                                 'Project': slo.project,
@@ -1575,11 +1713,11 @@ class Nobl9AccountAnalyzer:
                                 'Weight': comp.weight,
                                 'Normalized Weight': comp.normalized_weight,
                                 'When Delayed': when_delayed_str,
+                                'Component Target': component_target,
                                 'Composite Target': slo.target if slo.target is not None else "N/A"
                             })
                     
                     components_df = pd.DataFrame(components_data)
-                    # Clean up empty/None values to prevent empty columns
                     components_df = components_df.replace(['', 'None', '[]', 'unknown'], pd.NA).dropna(axis=1, how='all')
                     components_df.to_excel(writer, sheet_name='Composite SLO Components', index=False)
                     self._auto_adjust_column_widths(writer, 'Composite SLO Components', components_df)
@@ -1610,7 +1748,6 @@ class Nobl9AccountAnalyzer:
                         'SLO Count': service.slo_count
                     })
                 services_df = pd.DataFrame(services_data)
-                # Clean up empty/None values to prevent empty columns
                 services_df = services_df.replace(['', 'None'], pd.NA).dropna(axis=1, how='all')
                 services_df.to_excel(writer, sheet_name='Services', index=False)
                 self._auto_adjust_column_widths(writer, 'Services', services_df)
