@@ -39,3 +39,6 @@ Thumbs.db
 .venv/
 venv/
 env/
+
+# Composite analyzer script (different implementation)
+composite_analyzer.py

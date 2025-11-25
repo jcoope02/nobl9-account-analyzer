@@ -206,6 +206,15 @@ def load_contexts_from_toml() -> Dict[str, Dict[str, Any]]:
         print(f"Failed to parse TOML config: {e}")
         return {}
 
+def get_credentials_for_context(context_name: str) -> Optional[Dict[str, Any]]:
+    """Get credentials for a specific context by name."""
+    contexts_dict = load_contexts_from_toml()
+    if not contexts_dict:
+        print("No valid contexts found. Please ensure your config.toml is set up correctly.")
+        return None
+    
+    return contexts_dict.get(context_name)
+
 def enhanced_choose_context() -> Tuple[str, Dict[str, Any]]:
     """Enhanced context selection with custom instance support."""
     contexts_dict = load_contexts_from_toml()
@@ -511,6 +520,8 @@ class Nobl9AccountAnalyzer:
                         updated_at=item.get("status", {}).get("updatedAt", "")
                     )
                     self.composite_slos.append(composite_slo)
+                    # Skip adding composite SLOs to regular SLOs list
+                    continue
                     
 
                 
@@ -960,43 +971,6 @@ class Nobl9AccountAnalyzer:
                     display_name = display_name[:45] + "..."
                 print(f"{display_name:<50} {slo.project:<20} {slo.component_count:<12} {target_str:<10}")
             print()
-            
-            # Detailed breakdown
-            print_header("DETAILED COMPOSITE SLO BREAKDOWN")
-            for slo in sorted(self.composite_slos, key=lambda x: x.component_count, reverse=True):
-                print_colored(f"• {slo.name} ({slo.project}) - {slo.component_count} components", colorama.Fore.CYAN)
-                print_colored(f"    Target: {slo.target:.6f}", colorama.Fore.WHITE)
-                if slo.description:
-                    # Clean up description: remove line breaks, extra spaces, and special characters
-                    clean_description = slo.description.replace('\n', ' ').replace('\r', ' ').replace('•••', '...')
-                    # Remove multiple consecutive spaces
-                    clean_description = re.sub(r'\s+', ' ', clean_description).strip()
-                    print_colored(f"    Description: {clean_description}", colorama.Fore.WHITE)
-                
-                # Show component details in a table format
-                print_colored(f"  Components:", colorama.Fore.WHITE)
-                print_colored(f"    {'Name':<75} {'Weight':<10} {'Norm Weight':<12} {'When Delayed':<15} {'Component Target':<18}", colorama.Fore.CYAN)
-                print_colored(f"    {'-' * 75} {'-' * 10} {'-' * 12} {'-' * 15} {'-' * 18}", colorama.Fore.CYAN)
-                for comp in slo.components:
-                    when_delayed_str = comp.when_delayed if comp.when_delayed else "N/A"
-                    weight_str = f"{comp.weight:.2f}" if comp.weight else "N/A"
-                    norm_weight_str = f"{comp.normalized_weight:.2f}" if comp.normalized_weight else "N/A"
-                    # Look up the component target using the shared method
-                    component_target = self._get_component_target(comp.name)
-                    component_target_str = f"{component_target:.6f}" if component_target is not None else "N/A"
-                    
-                    # Truncate long names and add ellipsis if needed
-                    display_name = comp.name
-                    if len(display_name) > 73:
-                        display_name = display_name[:70] + "..."
-                    
-                    # Print component data with component target in grey
-                    print_colored(f"    {display_name:<75} {weight_str:<10} {norm_weight_str:<12} {when_delayed_str:<15} ", colorama.Fore.WHITE, end="")
-                    print_colored(f"{component_target_str:<18}", colorama.Fore.LIGHTBLACK_EX)
-                
-                if slo.alert_policies:
-                    print_colored(f"  Alert Policies: {', '.join(slo.alert_policies)}", colorama.Fore.WHITE)
-                print()
         else:
             print_header("COMPOSITE SLO ANALYSIS")
             print_colored("No composite SLOs found in this account.", colorama.Fore.YELLOW)
@@ -1253,6 +1227,41 @@ class Nobl9AccountAnalyzer:
                 print_colored(f"{display_name:<35} {slo.project:<20} {formatted_time:<25}", colorama.Fore.WHITE)
         else:
             print_colored("No SLOs with update timestamps found", colorama.Fore.YELLOW)
+        
+        print()
+        
+        # Get all SLOs with created timestamps and sort by most recent
+        slos_with_created_at = [slo for slo in self.slos if slo.created_at]
+        slos_with_created_at.sort(key=lambda x: x.created_at, reverse=True)
+        
+        if slos_with_created_at:
+            print_colored(f"20 Most Recently Created SLOs:", colorama.Fore.WHITE)
+            print()
+            
+            # Create a table header
+            print_colored(f"{'Display Name':<35} {'Project':<20} {'Created':<25}", colorama.Fore.CYAN)
+            print_colored("-" * 80, colorama.Fore.CYAN)
+            
+            # Show the 20 most recent with display names
+            for slo in slos_with_created_at[:20]:
+                # Get display name from raw SLO data
+                display_name = slo.name  # Default to name if no display name
+                for raw_slo in self.raw_slo_data:
+                    if (raw_slo.get("metadata", {}).get("name") == slo.name and 
+                        raw_slo.get("metadata", {}).get("project") == slo.project):
+                        display_name = raw_slo.get("metadata", {}).get("displayName", slo.name)
+                        break
+                
+                # Format the timestamp for better readability
+                try:
+                    timestamp = datetime.fromisoformat(slo.created_at.replace("Z", "+00:00"))
+                    formatted_time = timestamp.strftime("%Y-%m-%d %H:%M")
+                except ValueError:
+                    formatted_time = slo.created_at
+                
+                print_colored(f"{display_name:<35} {slo.project:<20} {formatted_time:<25}", colorama.Fore.WHITE)
+        else:
+            print_colored("No SLOs with creation timestamps found", colorama.Fore.YELLOW)
         
         print()
         
@@ -1639,35 +1648,20 @@ class Nobl9AccountAnalyzer:
                 # SLOs sheet
                 slos_data = []
                 for slo in self.slos:
-                    if slo.alert_policies:
-                        # Create a row for each alert policy
-                        for policy in slo.alert_policies:
-                            slos_data.append({
-                                'Name': slo.name,
-                                'Project': slo.project,
-                                'Service': slo.service,
-                                'Description': slo.description,
-                                'Target': slo.target,
-                                'Time Window': slo.time_window,
-                                'Alert Policy': policy,
-                                'Health Status': slo.health_status,
-                                'Created At': slo.created_at,
-                                'Updated At': slo.updated_at
-                            })
-                    else:
-                        # SLO with no alert policies
-                        slos_data.append({
-                            'Name': slo.name,
-                            'Project': slo.project,
-                            'Service': slo.service,
-                            'Description': slo.description,
-                            'Target': slo.target,
-                            'Time Window': slo.time_window,
-                            'Alert Policy': 'None',
-                            'Health Status': slo.health_status,
-                            'Created At': slo.created_at,
-                            'Updated At': slo.updated_at
-                        })
+                    # Show one row per SLO, with alert policies as comma-separated list
+                    alert_policies_str = ", ".join(slo.alert_policies) if slo.alert_policies else "None"
+                    slos_data.append({
+                        'Name': slo.name,
+                        'Project': slo.project,
+                        'Service': slo.service,
+                        'Description': slo.description,
+                        'Target': slo.target,
+                        'Time Window': slo.time_window,
+                        'Alert Policies': alert_policies_str,
+                        'Health Status': slo.health_status,
+                        'Created At': slo.created_at,
+                        'Updated At': slo.updated_at
+                    })
                 
                 slos_df = pd.DataFrame(slos_data)
                 slos_df = slos_df.replace(['', 'None', '[]', 'unknown'], pd.NA).dropna(axis=1, how='all')
@@ -1808,263 +1802,313 @@ class Nobl9AccountAnalyzer:
                 if hasattr(self, '_slo_lookup') and self._slo_lookup:
                     # Get all data sources
                     agents = self._get_data_sources("agents")
-                directs = self._get_data_sources("directs")
-                all_data_sources = {**agents, **directs}
-                
-                # Create comprehensive data source analysis
-                source_analysis = {}
-                
-                # First, add all configured agents and directs
-                for source_name, source_type in all_data_sources.items():
-                    source_analysis[source_name] = {
-                        'Data Source Name': source_name,
-                        'Source Type': source_type,
-                        'Kind': 'Agent' if source_name in agents else 'Direct',
-                        'SLO Count': 0,
-                        'Configured': 'Yes',
-                        'Status': 'Unused'
-                    }
-                
-                # Count SLOs for each data source
-                for slo in self.slos:
-                    raw_slo_data = self._slo_lookup.get((slo.name, slo.project))
-                    if raw_slo_data:
-                        spec = raw_slo_data.get("spec", {})
-                        indicator = spec.get("indicator", {})
-                        
-                        if "composite" not in indicator:
-                            metric_source = indicator.get("metricSource", {})
-                            source_name = metric_source.get("name", "")
-                            source_kind = metric_source.get("kind", "Unknown")
-                            
-                            if source_name:
-                                if source_name not in source_analysis:
-                                    source_analysis[source_name] = {
-                                        'Data Source Name': source_name,
-                                        'Source Type': 'Unknown',
-                                        'Kind': source_kind,
-                                        'SLO Count': 0,
-                                        'Configured': 'No',
-                                        'Status': 'Used but Unconfigured'
-                                    }
-                                
-                                source_analysis[source_name]['SLO Count'] += 1
-                                if source_analysis[source_name]['Configured'] == 'Yes':
-                                    source_analysis[source_name]['Status'] = 'Active'
-                
-                # Convert to DataFrame
-                if source_analysis:
-                    source_analysis_data = list(source_analysis.values())
-                    source_df = pd.DataFrame(source_analysis_data)
-                    source_df.to_excel(writer, sheet_name='Data Source Analysis', index=False)
-                    self._auto_adjust_column_widths(writer, 'Data Source Analysis', source_df)
-                else:
-                    pass
-            
-            # Time Window Analysis sheet
-            if self.slos:
-                time_window_details = {}
-                calendar_aligned = 0
-                rolling_windows = 0
-                
-                for slo in self.slos:
-                    raw_slo_data = None
-                    for raw_slo in self.raw_slo_data:
-                        if (raw_slo.get("metadata", {}).get("name") == slo.name and 
-                            raw_slo.get("metadata", {}).get("project") == slo.project):
-                            raw_slo_data = raw_slo
-                            break
+                    directs = self._get_data_sources("directs")
+                    all_data_sources = {**agents, **directs}
                     
-                    if raw_slo_data:
-                        spec = raw_slo_data.get("spec", {})
-                        time_windows = spec.get("timeWindows", [])
+                    # Create comprehensive data source analysis
+                    source_analysis = {}
+                    
+                    # First, add all configured agents and directs
+                    for source_name, source_type in all_data_sources.items():
+                        source_analysis[source_name] = {
+                            'Data Source Name': source_name,
+                            'Source Type': source_type,
+                            'Kind': 'Agent' if source_name in agents else 'Direct',
+                            'SLO Count': 0,
+                            'Configured': 'Yes',
+                            'Status': 'Unused'
+                        }
+                    
+                    # Count SLOs for each data source
+                    for slo in self.slos:
+                        raw_slo_data = self._slo_lookup.get((slo.name, slo.project))
+                        if raw_slo_data:
+                            spec = raw_slo_data.get("spec", {})
+                            indicator = spec.get("indicator", {})
+                            
+                            if "composite" not in indicator:
+                                metric_source = indicator.get("metricSource", {})
+                                source_name = metric_source.get("name", "")
+                                source_kind = metric_source.get("kind", "Unknown")
+                                
+                                if source_name:
+                                    if source_name not in source_analysis:
+                                        source_analysis[source_name] = {
+                                            'Data Source Name': source_name,
+                                            'Source Type': 'Unknown',
+                                            'Kind': source_kind,
+                                            'SLO Count': 0,
+                                            'Configured': 'No',
+                                            'Status': 'Used but Unconfigured'
+                                        }
+                                    
+                                    source_analysis[source_name]['SLO Count'] += 1
+                                    if source_analysis[source_name]['Configured'] == 'Yes':
+                                        source_analysis[source_name]['Status'] = 'Active'
+                    
+                    # Convert to DataFrame
+                    if source_analysis:
+                        source_analysis_data = list(source_analysis.values())
+                        source_df = pd.DataFrame(source_analysis_data)
+                        source_df.to_excel(writer, sheet_name='Data Source Analysis', index=False)
+                        self._auto_adjust_column_widths(writer, 'Data Source Analysis', source_df)
+                    else:
+                        pass
+                
+                # Time Window Analysis sheet
+                if self.slos:
+                    time_window_details = {}
+                    calendar_aligned = 0
+                    rolling_windows = 0
+                    
+                    for slo in self.slos:
+                        raw_slo_data = None
+                        for raw_slo in self.raw_slo_data:
+                            if (raw_slo.get("metadata", {}).get("name") == slo.name and 
+                                raw_slo.get("metadata", {}).get("project") == slo.project):
+                                raw_slo_data = raw_slo
+                                break
                         
-                        for tw in time_windows:
-                            is_rolling = tw.get("isRolling", False)
-                            if is_rolling:
-                                rolling_windows += 1
-                            else:
-                                calendar_aligned += 1
+                        if raw_slo_data:
+                            spec = raw_slo_data.get("spec", {})
+                            time_windows = spec.get("timeWindows", [])
                             
-                            count = tw.get("count", 0)
-                            unit = tw.get("unit", "Unknown")
-                            
-                            if count > 0:
-                                key = f"{count} {unit}"
+                            for tw in time_windows:
+                                is_rolling = tw.get("isRolling", False)
                                 if is_rolling:
-                                    key += " (Rolling)"
+                                    rolling_windows += 1
                                 else:
-                                    key += " (Calendar)"
+                                    calendar_aligned += 1
                                 
-                                time_window_details[key] = time_window_details.get(key, 0) + 1
-                
-                if time_window_details:
-                    time_window_data = []
-                    for window, count in sorted(time_window_details.items(), key=lambda x: x[1], reverse=True):
-                        percentage = (count / len(self.slos)) * 100
+                                count = tw.get("count", 0)
+                                unit = tw.get("unit", "Unknown")
+                                
+                                if count > 0:
+                                    key = f"{count} {unit}"
+                                    if is_rolling:
+                                        key += " (Rolling)"
+                                    else:
+                                        key += " (Calendar)"
+                                    
+                                    time_window_details[key] = time_window_details.get(key, 0) + 1
+                    
+                    if time_window_details:
+                        time_window_data = []
+                        for window, count in sorted(time_window_details.items(), key=lambda x: x[1], reverse=True):
+                            percentage = (count / len(self.slos)) * 100
+                            time_window_data.append({
+                                'Time Window': window,
+                                'SLO Count': count,
+                                'Percentage': f"{percentage:.1f}%"
+                            })
+                        
+                        # Add summary rows
                         time_window_data.append({
-                            'Time Window': window,
-                            'SLO Count': count,
-                            'Percentage': f"{percentage:.1f}%"
+                            'Time Window': 'Rolling Windows Total',
+                            'SLO Count': rolling_windows,
+                            'Percentage': f"{(rolling_windows / len(self.slos)) * 100:.1f}%"
+                        })
+                        time_window_data.append({
+                            'Time Window': 'Calendar Aligned Total',
+                            'SLO Count': calendar_aligned,
+                            'Percentage': f"{(calendar_aligned / len(self.slos)) * 100:.1f}%"
+                        })
+                        
+                        time_window_df = pd.DataFrame(time_window_data)
+                        time_window_df.to_excel(writer, sheet_name='Time Window Analysis', index=False)
+                        self._auto_adjust_column_widths(writer, 'Time Window Analysis', time_window_df)
+                    else:
+                        pass
+                
+                # Recent SLO Changes sheet
+                slos_with_updates = [slo for slo in self.slos if slo.updated_at]
+                if slos_with_updates:
+                    slos_with_updates.sort(key=lambda x: x.updated_at, reverse=True)
+                    recent_changes_data = []
+                    
+                    for slo in slos_with_updates:  # Full list for export
+                        # Get display name from raw SLO data
+                        display_name = slo.name
+                        for raw_slo in self.raw_slo_data:
+                            if (raw_slo.get("metadata", {}).get("name") == slo.name and 
+                                raw_slo.get("metadata", {}).get("project") == slo.project):
+                                display_name = raw_slo.get("metadata", {}).get("displayName", slo.name)
+                                break
+                        
+                        # Find who made the change from audit logs
+                        changed_by = "Unknown"
+                        for log in self.audit_logs:
+                            # Look for SLO-related events in audit logs
+                            if (log.object_type == "SLO" and 
+                                log.object_name == slo.name and 
+                                log.project == slo.project):
+                                # Parse user information from actor field
+                                actor = log.actor
+                                if actor and "user" in actor and actor["user"]:
+                                    user_info = actor["user"]
+                                    if "firstName" in user_info and "lastName" in user_info:
+                                        changed_by = (f"{user_info['firstName'].strip()} "
+                                                   f"{user_info['lastName'].strip()}")
+                                    elif "id" in user_info:
+                                        changed_by = user_info["id"]
+                                    else:
+                                        changed_by = "Unknown User"
+                                else:
+                                    changed_by = "System"
+                                break
+                            # Look for specific SLO event types from audit logs
+                            elif (log.event and 
+                                  log.event in ["slo_updated", "slo_created"] and
+                                  log.object_name == slo.name and 
+                                  log.project == slo.project):
+                                # Parse user information from actor field
+                                actor = log.actor
+                                if actor and "user" in actor and actor["user"]:
+                                    user_info = actor["user"]
+                                    if "firstName" in user_info and "lastName" in user_info:
+                                        changed_by = (f"{user_info['firstName'].strip()} "
+                                                   f"{user_info['lastName'].strip()}")
+                                    elif "id" in user_info:
+                                        changed_by = user_info["id"]
+                                    else:
+                                        changed_by = "Unknown User"
+                                else:
+                                    changed_by = "System"
+                                break
+                        
+                        recent_changes_data.append({
+                            'Display Name': display_name,
+                            'SLO Name': slo.name,
+                            'Project': slo.project,
+                            'Service': slo.service,
+                            'Last Updated': slo.updated_at
                         })
                     
-                    # Add summary rows
-                    time_window_data.append({
-                        'Time Window': 'Rolling Windows Total',
-                        'SLO Count': rolling_windows,
-                        'Percentage': f"{(rolling_windows / len(self.slos)) * 100:.1f}%"
-                    })
-                    time_window_data.append({
-                        'Time Window': 'Calendar Aligned Total',
-                        'SLO Count': calendar_aligned,
-                        'Percentage': f"{(calendar_aligned / len(self.slos)) * 100:.1f}%"
-                    })
-                    
-                    time_window_df = pd.DataFrame(time_window_data)
-                    time_window_df.to_excel(writer, sheet_name='Time Window Analysis', index=False)
-                    self._auto_adjust_column_widths(writer, 'Time Window Analysis', time_window_df)
+                    recent_df = pd.DataFrame(recent_changes_data)
+                    recent_df.to_excel(writer, sheet_name='Recent SLO Changes', index=False)
+                    self._auto_adjust_column_widths(writer, 'Recent SLO Changes', recent_df)
                 else:
                     pass
-            
-            # Recent SLO Changes sheet
-            slos_with_updates = [slo for slo in self.slos if slo.updated_at]
-            if slos_with_updates:
-                slos_with_updates.sort(key=lambda x: x.updated_at, reverse=True)
-                recent_changes_data = []
                 
-                for slo in slos_with_updates:  # Full list for export
-                    # Get display name from raw SLO data
-                    display_name = slo.name
-                    for raw_slo in self.raw_slo_data:
-                        if (raw_slo.get("metadata", {}).get("name") == slo.name and 
-                            raw_slo.get("metadata", {}).get("project") == slo.project):
-                            display_name = raw_slo.get("metadata", {}).get("displayName", slo.name)
-                            break
+                # Recently Created SLOs sheet
+                slos_with_created_at = [slo for slo in self.slos if slo.created_at]
+                if slos_with_created_at:
+                    slos_with_created_at.sort(key=lambda x: x.created_at, reverse=True)
+                    recently_created_data = []
                     
-                    # Find who made the change from audit logs
-                    changed_by = "Unknown"
-                    for log in self.audit_logs:
-                        # Look for SLO-related events in audit logs
-                        if (log.object_type == "SLO" and 
-                            log.object_name == slo.name and 
-                            log.project == slo.project):
-                            # Parse user information from actor field
-                            actor = log.actor
-                            if actor and "user" in actor and actor["user"]:
-                                user_info = actor["user"]
-                                if "firstName" in user_info and "lastName" in user_info:
-                                    changed_by = (f"{user_info['firstName'].strip()} "
-                                               f"{user_info['lastName'].strip()}")
-                                elif "id" in user_info:
-                                    changed_by = user_info["id"]
+                    for slo in slos_with_created_at[:50]:  # Top 50 most recently created
+                        # Get display name from raw SLO data
+                        display_name = slo.name
+                        for raw_slo in self.raw_slo_data:
+                            if (raw_slo.get("metadata", {}).get("name") == slo.name and 
+                                raw_slo.get("metadata", {}).get("project") == slo.project):
+                                display_name = raw_slo.get("metadata", {}).get("displayName", slo.name)
+                                break
+                        
+                        # Find who created the SLO from audit logs
+                        created_by = "Unknown"
+                        for log in self.audit_logs:
+                            # Look for SLO creation events in audit logs
+                            if (log.event == "slo_created" and 
+                                log.object_name == slo.name and 
+                                log.project == slo.project):
+                                # Parse user information from actor field
+                                actor = log.actor
+                                if actor and "user" in actor and actor["user"]:
+                                    user_info = actor["user"]
+                                    if "firstName" in user_info and "lastName" in user_info:
+                                        created_by = (f"{user_info['firstName'].strip()} "
+                                                   f"{user_info['lastName'].strip()}")
+                                    elif "id" in user_info:
+                                        created_by = user_info["id"]
+                                    else:
+                                        created_by = "Unknown User"
                                 else:
-                                    changed_by = "Unknown User"
-                            else:
-                                changed_by = "System"
-                            break
-                        # Look for specific SLO event types from audit logs
-                        elif (log.event and 
-                              log.event in ["slo_updated", "slo_created"] and
-                              log.object_name == slo.name and 
-                              log.project == slo.project):
-                            # Parse user information from actor field
-                            actor = log.actor
-                            if actor and "user" in actor and actor["user"]:
-                                user_info = actor["user"]
-                                if "firstName" in user_info and "lastName" in user_info:
-                                    changed_by = (f"{user_info['firstName'].strip()} "
-                                               f"{user_info['lastName'].strip()}")
-                                elif "id" in user_info:
-                                    changed_by = user_info["id"]
-                                else:
-                                    changed_by = "Unknown User"
-                            else:
-                                changed_by = "System"
-                            break
-                    
-                    recent_changes_data.append({
-                        'Display Name': display_name,
-                        'SLO Name': slo.name,
-                        'Project': slo.project,
-                        'Service': slo.service,
-                        'Last Updated': slo.updated_at
-                    })
-                
-                recent_df = pd.DataFrame(recent_changes_data)
-                recent_df.to_excel(writer, sheet_name='Recent SLO Changes', index=False)
-                self._auto_adjust_column_widths(writer, 'Recent SLO Changes', recent_df)
-            else:
-                pass
-            
-            # Top 10 Most Active Users sheet
-            if summary.top_active_users:
-                top_users_data = []
-                for i, (user, count) in enumerate(summary.top_active_users, 1):
-                    top_users_data.append({
-                        'Rank': i,
-                        'User': user,
-                        'Change Count': count
-                    })
-                
-                top_users_df = pd.DataFrame(top_users_data)
-                # Clean up empty/None values to prevent empty columns
-                top_users_df = top_users_df.replace(['', 'None'], pd.NA).dropna(axis=1, how='all')
-                # Ensure we only have the expected columns
-                expected_cols = ['Rank', 'User', 'Change Count']
-                top_users_df = top_users_df[[col for col in expected_cols if col in top_users_df.columns]]
-                top_users_df.to_excel(writer, sheet_name='Top 10 Most Active Users', index=False)
-                self._auto_adjust_column_widths(writer, 'Top 10 Most Active Users', top_users_df)
-            else:
-                pass
-            
-            # Audit Trail Summary sheet
-            if summary.top_active_users:
-                # User activity
-                user_activity_data = []
-                total_changes = summary.last_7_days_changes
-                for user, count in summary.top_active_users:
-                    user_activity_data.append({
-                        'User': user,
-                        'Change Count': count,
-                        'Percentage': f"{(count / total_changes) * 100:.1f}%" if total_changes > 0 else "0.0%"
-                    })
-                
-                user_df = pd.DataFrame(user_activity_data)
-                # Clean up empty/None values to prevent empty columns
-                user_df = user_df.replace(['', 'None'], pd.NA).dropna(axis=1, how='all')
-                # Ensure we only have the expected columns
-                expected_cols = ['User', 'Change Count', 'Percentage']
-                user_df = user_df[[col for col in expected_cols if col in user_df.columns]]
-                user_df.to_excel(writer, sheet_name='User Activity', index=False)
-                self._auto_adjust_column_widths(writer, 'User Activity', user_df)
-                
-                # Event types
-                event_types = {}
-                for log in self.audit_logs:
-                    event = log.event
-                    event_types[event] = event_types.get(event, 0) + 1
-                
-                if event_types:
-                    event_data = []
-                    for event, count in sorted(event_types.items(), key=lambda x: x[1], reverse=True):
-                        event_data.append({
-                            'Event Type': event,
-                            'Count': count,
-                            'Percentage': f"{(count / len(self.audit_logs)) * 100:.1f}%"
+                                    created_by = "System"
+                                break
+                        
+                        recently_created_data.append({
+                            'Display Name': display_name,
+                            'Project': slo.project,
+                            'Created At': slo.created_at,
+                            'Created By': created_by
                         })
                     
-                    event_df = pd.DataFrame(event_data)
+                    recently_created_df = pd.DataFrame(recently_created_data)
+                    recently_created_df.to_excel(writer, sheet_name='Recently Created SLOs', index=False)
+                    self._auto_adjust_column_widths(writer, 'Recently Created SLOs', recently_created_df)
+                else:
+                    pass
+                
+                # Top 10 Most Active Users sheet
+                if summary.top_active_users:
+                    top_users_data = []
+                    for i, (user, count) in enumerate(summary.top_active_users, 1):
+                        top_users_data.append({
+                            'Rank': i,
+                            'User': user,
+                            'Change Count': count
+                        })
+                    
+                    top_users_df = pd.DataFrame(top_users_data)
                     # Clean up empty/None values to prevent empty columns
-                    event_df = event_df.replace(['', 'None'], pd.NA).dropna(axis=1, how='all')
+                    top_users_df = top_users_df.replace(['', 'None'], pd.NA).dropna(axis=1, how='all')
                     # Ensure we only have the expected columns
-                    expected_cols = ['Event Type', 'Count', 'Percentage']
-                    event_df = event_df[[col for col in expected_cols if col in event_df.columns]]
-                    event_df.to_excel(writer, sheet_name='Event Types', index=False)
-                    self._auto_adjust_column_widths(writer, 'Event Types', event_df)
+                    expected_cols = ['Rank', 'User', 'Change Count']
+                    top_users_df = top_users_df[[col for col in expected_cols if col in top_users_df.columns]]
+                    top_users_df.to_excel(writer, sheet_name='Top 10 Most Active Users', index=False)
+                    self._auto_adjust_column_widths(writer, 'Top 10 Most Active Users', top_users_df)
                 else:
                     pass
-            else:
-                pass
+                
+                # Audit Trail Summary sheet
+                if summary.top_active_users:
+                    # User activity
+                    user_activity_data = []
+                    total_changes = summary.last_7_days_changes
+                    for user, count in summary.top_active_users:
+                        user_activity_data.append({
+                            'User': user,
+                            'Change Count': count,
+                            'Percentage': f"{(count / total_changes) * 100:.1f}%" if total_changes > 0 else "0.0%"
+                        })
+                    
+                    user_df = pd.DataFrame(user_activity_data)
+                    # Clean up empty/None values to prevent empty columns
+                    user_df = user_df.replace(['', 'None'], pd.NA).dropna(axis=1, how='all')
+                    # Ensure we only have the expected columns
+                    expected_cols = ['User', 'Change Count', 'Percentage']
+                    user_df = user_df[[col for col in expected_cols if col in user_df.columns]]
+                    user_df.to_excel(writer, sheet_name='User Activity', index=False)
+                    self._auto_adjust_column_widths(writer, 'User Activity', user_df)
+                    
+                    # Event types
+                    event_types = {}
+                    for log in self.audit_logs:
+                        event = log.event
+                        event_types[event] = event_types.get(event, 0) + 1
+                    
+                    if event_types:
+                        event_data = []
+                        for event, count in sorted(event_types.items(), key=lambda x: x[1], reverse=True):
+                            event_data.append({
+                                'Event Type': event,
+                                'Count': count,
+                                'Percentage': f"{(count / len(self.audit_logs)) * 100:.1f}%"
+                            })
+                        
+                        event_df = pd.DataFrame(event_data)
+                        # Clean up empty/None values to prevent empty columns
+                        event_df = event_df.replace(['', 'None'], pd.NA).dropna(axis=1, how='all')
+                        # Ensure we only have the expected columns
+                        expected_cols = ['Event Type', 'Count', 'Percentage']
+                        event_df = event_df[[col for col in expected_cols if col in event_df.columns]]
+                        event_df.to_excel(writer, sheet_name='Event Types', index=False)
+                        self._auto_adjust_column_widths(writer, 'Event Types', event_df)
+                    else:
+                        pass
+                else:
+                    pass
             
         except Exception as e:
             print(f"Error during Excel export: {e}")
@@ -2147,6 +2191,8 @@ class Nobl9AccountAnalyzer:
                         source_type_name = "prometheus"
                     elif "cloudWatch" in spec:
                         source_type_name = "cloudwatch"
+                    elif "splunkObservability" in spec or "splunk-observability" in spec:
+                        source_type_name = "splunk-obs"
                     elif "splunk" in spec:
                         source_type_name = "splunk"
                     elif "dynatrace" in spec:
@@ -2167,12 +2213,12 @@ class Nobl9AccountAnalyzer:
                         source_type_name = "azure_prometheus"
                     elif "coralogix" in spec:
                         source_type_name = "coralogix"
-                    elif "elasticsearch" in spec:
+                    elif "elastic" in spec or "elasticsearch" in spec:
                         source_type_name = "elasticsearch"
                     elif "bigQuery" in spec:
                         source_type_name = "google_bigquery"
-                    elif "loki" in spec:
-                        source_type_name = "grafana_loki"
+                    elif "loki" in spec or "grafanaLoki" in spec:
+                        source_type_name = "loki"
                     elif "graphite" in spec:
                         source_type_name = "graphite"
                     elif "influxdb" in spec:
@@ -2191,7 +2237,29 @@ class Nobl9AccountAnalyzer:
                         source_type_name = "sumo_logic"
                     elif "thousandEyes" in spec:
                         source_type_name = "thousandeyes"
-                    elif "appDynamics" in spec:
+                    elif "newRelic" in spec:
+                        source_type_name = "newrelic"
+                    elif "bigQuery" in spec:
+                        source_type_name = "bigquery"
+                    elif "opentsdb" in spec:
+                        source_type_name = "opentsdb"
+                    elif "amazonPrometheus" in spec:
+                        source_type_name = "amazon-prom"
+                    elif "graphite" in spec:
+                        source_type_name = "graphite"
+                    elif "gcm" in spec:
+                        source_type_name = "gcm"
+                    elif "redshift" in spec:
+                        source_type_name = "redshift"
+                    elif "azureMonitor" in spec or "azurePrometheus" in spec:
+                        source_type_name = "azure"
+                    elif "coralogix" in spec:
+                        source_type_name = "coralogix"
+                    elif "influxdb" in spec:
+                        source_type_name = "influxdb"
+                    elif "logicMonitor" in spec:
+                        source_type_name = "logicmonitor"
+                    elif "appdynamics" in spec or "appDynamics" in spec:
                         source_type_name = "appdynamics"
                     else:
                         # Look for any other monitoring tool in spec
