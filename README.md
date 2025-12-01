@@ -200,7 +200,8 @@ Examples:
 The Excel export includes multiple sheets:
 - **Summary**: Executive summary metrics
 - **Projects**: Complete project listing
-- **SLOs**: Detailed SLO information
+- **SLOs**: Detailed SLO information with queries and hyperlinks
+- **Composite SLOs**: Composite SLO details and components
 - **Alert Policies**: Policy details and usage
 - **Services**: Service information and SLO counts
 - **SLOs without Alert Policies**: Uncovered SLOs
@@ -209,9 +210,19 @@ The Excel export includes multiple sheets:
 - **Data Source Analysis**: Data source utilization
 - **Time Window Analysis**: Time window patterns
 - **Recent SLO Changes**: Recently modified SLOs
+- **Recently Created SLOs**: Most recently created SLOs with creator information
 - **Top 10 Most Active Users**: User activity rankings
 - **User Activity**: Detailed user statistics
 - **Event Types**: Audit event breakdowns
+
+### SLOs Sheet Features
+
+The SLOs sheet includes:
+- **Display Name**: Clickable hyperlinks to open SLOs in Nobl9 UI
+- **Query Columns**: 
+  - **Query**: For rawMetric and thresholdMetric SLOs (single query)
+  - **Numerator Query**: For ratioMetric and countMetrics (good events)
+  - **Denominator Query**: For ratioMetric and countMetrics (total events)
 
 ## Authentication
 
@@ -294,6 +305,14 @@ This tool is provided as-is for analysis purposes. Ensure compliance with your o
 
 ## Recent Improvements
 
+### v1.5 - Enhanced SLO Export and Query Support
+- **SLO Query Extraction**: Added query columns to SLOs sheet showing actual queries for all metric types
+- **Hyperlinked SLO Names**: Display Name column contains clickable links to open SLOs in Nobl9 UI
+- **Improved SLO Tab Structure**: One row per SLO with alert policies as comma-separated list
+- **Composite SLO Separation**: Composite SLOs excluded from regular SLOs tab (appear only in Composite SLOs sheet)
+- **Query Support**: Handles rawMetric, ratioMetric, countMetrics, and thresholdMetric queries
+- **Code Quality**: Refactored query extraction with proper type hints and documentation
+
 ### v1.4 - Enhanced Reliability and Accuracy
 - **Fixed SLO Units Display**: Corrected API URL path to properly retrieve usage metrics
 - **Improved Data Source Counting**: Fixed calculation to show unique data sources instead of SLO count
@@ -303,6 +322,10 @@ This tool is provided as-is for analysis purposes. Ensure compliance with your o
 - **Cleaner Output**: Removed unnecessary target value statistics from time window analysis
 
 ### Key Fixes
+- ✅ **SLO Queries**: All SLO queries now extracted and displayed in Excel export
+- ✅ **Hyperlinks**: Direct links to SLOs in Nobl9 UI from Excel spreadsheet
+- ✅ **SLO Deduplication**: Fixed issue where SLOs appeared multiple times in export
+- ✅ **Composite SLOs**: Properly separated from regular SLOs in export
 - ✅ **SLO Units**: Now correctly displays actual billing units (e.g., 255 instead of 0)
 - ✅ **Custom URLs**: Handles various base URL formats for enterprise deployments
 - ✅ **Error Clarity**: Clear success/failure messages for audit log collection
@@ -315,3 +338,4 @@ This tool is provided as-is for analysis purposes. Ensure compliance with your o
 - **v1.2**: Integrated Nobl9 Reports API and improved efficiency
 - **v1.3**: Enhanced error handling and added interactive export options
 - **v1.4**: Fixed critical metrics display and improved reliability
+- **v1.5**: Added SLO query extraction, hyperlinks, and improved export structure

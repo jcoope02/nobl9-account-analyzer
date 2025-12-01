@@ -85,6 +85,10 @@ class SLOInfo:
     health_status: str
     created_at: str
     updated_at: str
+    display_name: str = ""
+    query: str = ""  # For rawMetric, thresholdMetric, or single query
+    numerator_query: str = ""  # For ratioMetric/countMetrics - good events
+    denominator_query: str = ""  # For ratioMetric/countMetrics - total events
 
 @dataclass
 class CompositeSLOComponent:
@@ -536,6 +540,9 @@ class Nobl9AccountAnalyzer:
                 else:
                     slo_target = spec.get("target", 0.0)
                 
+                # Extract queries (only for non-composite SLOs)
+                query, numerator_query, denominator_query = self._extract_slo_queries(spec) if not composite_components else ("", "", "")
+                
                 slo = SLOInfo(
                     name=metadata.get("name", ""),
                     project=metadata.get("project", ""),
@@ -546,12 +553,127 @@ class Nobl9AccountAnalyzer:
                     alert_policies=spec.get("alertPolicies", []),
                     health_status=item.get("status", {}).get("health", "unknown"),
                     created_at=spec.get("createdAt", ""),
-                    updated_at=item.get("status", {}).get("updatedAt", "")
+                    updated_at=item.get("status", {}).get("updatedAt", ""),
+                    display_name=metadata.get("displayName", ""),
+                    query=query,
+                    numerator_query=numerator_query,
+                    denominator_query=denominator_query
                 )
                 self.slos.append(slo)
         
         print(f"Collected SLOs (Total: {len(self.slos)}, Composite: {len(self.composite_slos)})")
     
+    def _extract_slo_queries(self, spec: Dict) -> Tuple[str, str, str]:
+        """Extract queries from SLO spec.
+        
+        Returns:
+            Tuple[str, str, str]: (query, numerator_query, denominator_query)
+                Queries are serialized to JSON strings if they are dictionaries.
+        """
+        def _serialize_query(query_obj: Any) -> str:
+            """Serialize query object to JSON string if it's a dict, otherwise return as string.
+            
+            Args:
+                query_obj: Query object (dict, string, or other)
+                
+            Returns:
+                Serialized query as string
+            """
+            if isinstance(query_obj, dict):
+                return json.dumps(query_obj, separators=(',', ':'))
+            elif query_obj:
+                return str(query_obj)
+            return ""
+        
+        def _is_query_dict(obj: Any) -> bool:
+            """Check if object is a query dictionary (contains data source keys).
+            
+            Args:
+                obj: Object to check
+                
+            Returns:
+                True if object appears to be a query dictionary
+            """
+            if not isinstance(obj, dict):
+                return False
+            query_keys = ["prometheus", "cloudWatch", "splunk", "datadog", 
+                         "elasticsearch", "metricSource"]
+            return any(key in obj for key in query_keys)
+        
+        def _extract_query_from_metric(metric: Dict) -> str:
+            """Extract query from metric dict, handling nested or direct query structures.
+            
+            Args:
+                metric: Metric dictionary (good or total from ratio/count metrics)
+                
+            Returns:
+                Serialized query string
+            """
+            # Check if query is nested under "query" key
+            if "query" in metric:
+                return _serialize_query(metric["query"])
+            # Otherwise, the metric dict itself might be the query
+            elif _is_query_dict(metric):
+                return _serialize_query(metric)
+            return ""
+        
+        query = ""
+        numerator_query = ""
+        denominator_query = ""
+        
+        objectives = spec.get("objectives", [])
+        if not objectives:
+            # Check indicator for raw query
+            indicator = spec.get("indicator", {})
+            if "rawMetric" in indicator:
+                raw_metric = indicator.get("rawMetric", {})
+                query_obj = raw_metric.get("query", "")
+                query = _serialize_query(query_obj)
+            elif "thresholdMetric" in indicator:
+                threshold_metric = indicator.get("thresholdMetric", {})
+                query_obj = threshold_metric.get("query", "")
+                query = _serialize_query(query_obj)
+            return (query, numerator_query, denominator_query)
+        
+        # Process objectives
+        for objective in objectives:
+            # Skip composite objectives
+            if "composite" in objective:
+                continue
+                
+            # Raw metric
+            if "rawMetric" in objective:
+                raw_metric = objective.get("rawMetric", {})
+                query_obj = raw_metric.get("query", "")
+                query = _serialize_query(query_obj)
+            
+            # Threshold metric
+            elif "thresholdMetric" in objective:
+                threshold_metric = objective.get("thresholdMetric", {})
+                query_obj = threshold_metric.get("query", "")
+                query = _serialize_query(query_obj)
+            
+            # Ratio metric - has numerator (good) and denominator (total)
+            elif "ratioMetric" in objective:
+                ratio_metric = objective.get("ratioMetric", {})
+                if "good" in ratio_metric:
+                    good_metric = ratio_metric.get("good", {})
+                    numerator_query = _extract_query_from_metric(good_metric)
+                if "total" in ratio_metric:
+                    total_metric = ratio_metric.get("total", {})
+                    denominator_query = _extract_query_from_metric(total_metric)
+            
+            # Count metrics - good/total ARE the query dicts
+            elif "countMetrics" in objective:
+                count_metrics = objective.get("countMetrics", {})
+                if "good" in count_metrics:
+                    good_metric = count_metrics.get("good", {})
+                    numerator_query = _serialize_query(good_metric)
+                if "total" in count_metrics:
+                    total_metric = count_metrics.get("total", {})
+                    denominator_query = _serialize_query(total_metric)
+        
+        return (query, numerator_query, denominator_query)
 
 
     def _get_component_target(self, component_name):
@@ -1650,12 +1772,31 @@ class Nobl9AccountAnalyzer:
                 for slo in self.slos:
                     # Show one row per SLO, with alert policies as comma-separated list
                     alert_policies_str = ", ".join(slo.alert_policies) if slo.alert_policies else "None"
+                    
+                    # Determine query columns based on SLO type
+                    # If it's a ratio/count metric, use numerator/denominator columns
+                    # Otherwise use single query column
+                    if slo.numerator_query or slo.denominator_query:
+                        # Ratio or count metric SLO
+                        query_col = ""
+                        numerator_col = slo.numerator_query or ""
+                        denominator_col = slo.denominator_query or ""
+                    else:
+                        # Raw, threshold, or other single query SLO
+                        query_col = slo.query or ""
+                        numerator_col = ""
+                        denominator_col = ""
+                    
                     slos_data.append({
                         'Name': slo.name,
+                        'Display Name': slo.display_name or slo.name,
                         'Project': slo.project,
                         'Service': slo.service,
                         'Description': slo.description,
                         'Target': slo.target,
+                        'Query': query_col,
+                        'Numerator Query': numerator_col,
+                        'Denominator Query': denominator_col,
                         'Time Window': slo.time_window,
                         'Alert Policies': alert_policies_str,
                         'Health Status': slo.health_status,
@@ -1667,6 +1808,25 @@ class Nobl9AccountAnalyzer:
                 slos_df = slos_df.replace(['', 'None', '[]', 'unknown'], pd.NA).dropna(axis=1, how='all')
                 slos_df.to_excel(writer, sheet_name='SLOs', index=False)
                 self._auto_adjust_column_widths(writer, 'SLOs', slos_df)
+                
+                # Add hyperlinks to Display Name column (URL based on SLO name)
+                if self.organization_id:
+                    worksheet = writer.sheets['SLOs']
+                    # Find the Display Name column index
+                    display_name_col_idx = None
+                    for idx, col in enumerate(slos_df.columns, start=1):
+                        if col == 'Display Name':
+                            display_name_col_idx = idx
+                            break
+                    
+                    if display_name_col_idx:
+                        # Add hyperlinks starting from row 2 (row 1 is header)
+                        # URL uses slo.name (the actual SLO name) even though link is in Display Name column
+                        for row_idx, slo in enumerate(self.slos, start=2):
+                            cell = worksheet.cell(row=row_idx, column=display_name_col_idx)
+                            slo_url = f"https://app.nobl9.com/slo/overview/{slo.project}/{slo.name}?org={self.organization_id}&opt=currentTimeWindow"
+                            cell.hyperlink = slo_url
+                            cell.style = "Hyperlink"
                 
                 # Composite SLOs sheet
                 if self.composite_slos:
