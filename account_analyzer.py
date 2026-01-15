@@ -89,6 +89,7 @@ class SLOInfo:
     query: str = ""  # For rawMetric, thresholdMetric, or single query
     numerator_query: str = ""  # For ratioMetric/countMetrics - good events
     denominator_query: str = ""  # For ratioMetric/countMetrics - total events
+    created_by: str = ""  # User ID who created the SLO
 
 @dataclass
 class CompositeSLOComponent:
@@ -111,6 +112,7 @@ class CompositeSLOInfo:
     health_status: str
     created_at: str
     updated_at: str
+    created_by: str = ""  # User ID who created the composite SLO
 
 @dataclass
 class AlertPolicyInfo:
@@ -521,7 +523,8 @@ class Nobl9AccountAnalyzer:
                         alert_policies=spec.get("alertPolicies", []),
                         health_status=item.get("status", {}).get("health", "unknown"),
                         created_at=spec.get("createdAt", ""),
-                        updated_at=item.get("status", {}).get("updatedAt", "")
+                        updated_at=item.get("status", {}).get("updatedAt", ""),
+                        created_by=spec.get("createdBy", "")
                     )
                     self.composite_slos.append(composite_slo)
                     # Skip adding composite SLOs to regular SLOs list
@@ -557,7 +560,8 @@ class Nobl9AccountAnalyzer:
                     display_name=metadata.get("displayName", ""),
                     query=query,
                     numerator_query=numerator_query,
-                    denominator_query=denominator_query
+                    denominator_query=denominator_query,
+                    created_by=spec.get("createdBy", "")
                 )
                 self.slos.append(slo)
         
@@ -1416,170 +1420,170 @@ class Nobl9AccountAnalyzer:
         try:
             with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
-            
-            # Summary section
-            writer.writerow(["Nobl9 Account Analysis Summary"])
-            writer.writerow(["Generated", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
-            writer.writerow(["Organization", self.organization_id])
-            writer.writerow([])
-            writer.writerow(["Metric", "Value"])
-            writer.writerow(["Total Projects", summary.total_projects])
-            writer.writerow(["Total SLOs", summary.total_slos])
-            writer.writerow(["Total SLO Units", summary.total_slo_units])
-            writer.writerow(["Total Composite SLOs", summary.total_composite_slos])
-            writer.writerow(["Total Composite Components", summary.total_composite_components])
-            writer.writerow(["Total Services", summary.total_services])
-            writer.writerow(["Total Alert Policies", summary.total_alert_policies])
-            writer.writerow(["Total Data Sources", summary.total_data_sources])
-            writer.writerow(["Total Users", summary.total_users])
-            writer.writerow(["Alert Coverage", f"{summary.slo_coverage:.1f}%"])
-            writer.writerow(["Last 7 Days Changes", summary.last_7_days_changes])
-            
-            # Projects section
-            writer.writerow([])
-            writer.writerow(["PROJECTS"])
-            writer.writerow(["Name", "Display Name", "Description", "SLOs", "Services", "Alert Policies"])
-            for project in self.projects:
-                writer.writerow([
-                    project.name, project.display_name, project.description,
-                    project.slo_count, project.service_count, project.alert_policy_count
-                ])
-            
-            # SLOs section
-            writer.writerow([])
-            writer.writerow(["SLOS"])
-            writer.writerow(["Name", "Project", "Service", "Description", "Target", "Alert Policies", "Health"])
-            for slo in self.slos:
-                if slo.alert_policies:
-                    # Create a row for each alert policy
-                    for policy in slo.alert_policies:
+                
+                # Summary section
+                writer.writerow(["Nobl9 Account Analysis Summary"])
+                writer.writerow(["Generated", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+                writer.writerow(["Organization", self.organization_id])
+                writer.writerow([])
+                writer.writerow(["Metric", "Value"])
+                writer.writerow(["Total Projects", summary.total_projects])
+                writer.writerow(["Total SLOs", summary.total_slos])
+                writer.writerow(["Total SLO Units", summary.total_slo_units])
+                writer.writerow(["Total Composite SLOs", summary.total_composite_slos])
+                writer.writerow(["Total Composite Components", summary.total_composite_components])
+                writer.writerow(["Total Services", summary.total_services])
+                writer.writerow(["Total Alert Policies", summary.total_alert_policies])
+                writer.writerow(["Total Data Sources", summary.total_data_sources])
+                writer.writerow(["Total Users", summary.total_users])
+                writer.writerow(["Alert Coverage", f"{summary.slo_coverage:.1f}%"])
+                writer.writerow(["Last 7 Days Changes", summary.last_7_days_changes])
+                
+                # Projects section
+                writer.writerow([])
+                writer.writerow(["PROJECTS"])
+                writer.writerow(["Name", "Display Name", "Description", "SLOs", "Services", "Alert Policies"])
+                for project in self.projects:
+                    writer.writerow([
+                        project.name, project.display_name, project.description,
+                        project.slo_count, project.service_count, project.alert_policy_count
+                    ])
+                
+                # SLOs section
+                writer.writerow([])
+                writer.writerow(["SLOS"])
+                writer.writerow(["Name", "Project", "Service", "Description", "Target", "Alert Policies", "Health"])
+                for slo in self.slos:
+                    if slo.alert_policies:
+                        # Create a row for each alert policy
+                        for policy in slo.alert_policies:
+                            writer.writerow([
+                                slo.name, slo.project, slo.service, slo.description,
+                                slo.target, policy, slo.health_status
+                            ])
+                    else:
+                        # SLO with no alert policies
                         writer.writerow([
                             slo.name, slo.project, slo.service, slo.description,
-                            slo.target, policy, slo.health_status
+                            slo.target, "None", slo.health_status
                         ])
-                else:
-                    # SLO with no alert policies
-                    writer.writerow([
-                        slo.name, slo.project, slo.service, slo.description,
-                        slo.target, "None", slo.health_status
-                    ])
-            
-            # Composite SLOs section
-            if self.composite_slos:
-                writer.writerow([])
-                writer.writerow(["COMPOSITE SLOS"])
-                writer.writerow(["Name", "Project", "Description", "Component Count", "Target", "Alert Policies", "Health"])
-                for slo in self.composite_slos:
-                    alert_policies_str = ", ".join(slo.alert_policies) if slo.alert_policies else "None"
-                    writer.writerow([
-                        slo.name, slo.project, slo.description, slo.component_count,
-                        slo.target, alert_policies_str, slo.health_status
-                    ])
                 
-                # Component details section
-                writer.writerow([])
-                writer.writerow(["COMPOSITE SLO COMPONENTS"])
-                writer.writerow(["Composite SLO", "Project", "Component Name", "Weight", "Normalized Weight", "When Delayed", "Composite Target"])
-                for slo in self.composite_slos:
-                    for comp in slo.components:
-                        when_delayed_str = comp.when_delayed if comp.when_delayed else "N/A"
-                        composite_target = slo.target if slo.target is not None else "N/A"
+                # Composite SLOs section
+                if self.composite_slos:
+                    writer.writerow([])
+                    writer.writerow(["COMPOSITE SLOS"])
+                    writer.writerow(["Name", "Project", "Description", "Component Count", "Target", "Alert Policies", "Health"])
+                    for slo in self.composite_slos:
+                        alert_policies_str = ", ".join(slo.alert_policies) if slo.alert_policies else "None"
                         writer.writerow([
-                            slo.name, slo.project, comp.name, comp.weight, comp.normalized_weight, when_delayed_str, composite_target
+                            slo.name, slo.project, slo.description, slo.component_count,
+                            slo.target, alert_policies_str, slo.health_status
                         ])
-            
-            # Alert Policies section
-            writer.writerow([])
-            writer.writerow(["ALERT POLICIES"])
-            writer.writerow(["Name", "Project", "Description", "Severity", "Used by SLOs"])
-            for policy in self.alert_policies:
-                writer.writerow([
-                    policy.name, policy.project, policy.description,
-                    policy.severity, policy.used_by_slos
-                ])
-            
-            # Services section
-            writer.writerow([])
-            writer.writerow(["SERVICES"])
-            writer.writerow(["Name", "Project", "Description", "SLO Count"])
-            for service in self.services:
-                writer.writerow([
-                    service.name, service.project, service.description, service.slo_count
-                ])
-            
-            # SLOs without Alert Policies section
-            slos_without_policies = [slo for slo in self.slos if not slo.alert_policies]
-            if slos_without_policies:
-                writer.writerow([])
-                writer.writerow(["SLOS WITHOUT ALERT POLICIES"])
-                writer.writerow(["Service", "SLO Name", "Project", "Description", "Target"])
-                for slo in slos_without_policies:
-                    writer.writerow([
-                        slo.service, slo.name, slo.project, slo.description,
-                        slo.target
-                    ])
-            
-            # Unused Alert Policies section
-            unused_policies = [p for p in self.alert_policies if p.used_by_slos == 0]
-            if unused_policies:
-                writer.writerow([])
-                writer.writerow(["UNUSED ALERT POLICIES"])
-                writer.writerow(["Name", "Project", "Description", "Severity"])
-                for policy in unused_policies:
-                    writer.writerow([
-                        policy.name, policy.project, policy.description, policy.severity
-                    ])
-            
-            # Top Services by SLO Count section
-            if self.services:
-                writer.writerow([])
-                writer.writerow(["TOP SERVICES BY SLO COUNT"])
-                writer.writerow(["Rank", "Service Name", "Project", "SLO Count", "Description"])
-                services_by_slo_count = sorted(self.services, key=lambda x: x.slo_count, reverse=True)
-                for i, service in enumerate(services_by_slo_count[:20], 1):
-                    writer.writerow([
-                        i, service.name, service.project, service.slo_count, service.description
-                    ])
-            
-            # Recent SLO Changes section
-            slos_with_updates = [slo for slo in self.slos if slo.updated_at]
-            if slos_with_updates:
-                writer.writerow([])
-                writer.writerow(["RECENT SLO CHANGES"])
-                writer.writerow(["Display Name", "SLO Name", "Project", "Service", "Last Updated"])
-                slos_with_updates.sort(key=lambda x: x.updated_at, reverse=True)
-                for slo in slos_with_updates:
-                    # Get display name from raw SLO data
-                    display_name = slo.name
-                    for raw_slo in self.raw_slo_data:
-                        if (raw_slo.get("metadata", {}).get("name") == slo.name and 
-                            raw_slo.get("metadata", {}).get("project") == slo.project):
-                            display_name = raw_slo.get("metadata", {}).get("displayName", slo.name)
-                            break
                     
-                    writer.writerow([
-                        display_name, slo.name, slo.project, slo.service,
-                        slo.updated_at
-                    ])
-            
-            # Top 10 Most Active Users section
-            if summary.top_active_users:
-                writer.writerow([])
-                writer.writerow(["TOP 10 MOST ACTIVE USERS"])
-                writer.writerow(["Rank", "User", "Change Count"])
-                for i, (user, count) in enumerate(summary.top_active_users, 1):
-                    writer.writerow([i, user, count])
-            
-            # User Activity section (if audit logs available)
-            if summary.top_active_users:
-                writer.writerow([])
-                writer.writerow(["USER ACTIVITY"])
-                writer.writerow(["User", "Change Count", "Percentage"])
+                    # Component details section
+                    writer.writerow([])
+                    writer.writerow(["COMPOSITE SLO COMPONENTS"])
+                    writer.writerow(["Composite SLO", "Project", "Component Name", "Weight", "Normalized Weight", "When Delayed", "Composite Target"])
+                    for slo in self.composite_slos:
+                        for comp in slo.components:
+                            when_delayed_str = comp.when_delayed if comp.when_delayed else "N/A"
+                            composite_target = slo.target if slo.target is not None else "N/A"
+                            writer.writerow([
+                                slo.name, slo.project, comp.name, comp.weight, comp.normalized_weight, when_delayed_str, composite_target
+                            ])
                 
-                total_changes = summary.last_7_days_changes
-                for user, count in summary.top_active_users:
-                    percentage = (count / total_changes) * 100 if total_changes > 0 else 0
-                    writer.writerow([user, count, f"{percentage:.1f}%"])
+                # Alert Policies section
+                writer.writerow([])
+                writer.writerow(["ALERT POLICIES"])
+                writer.writerow(["Name", "Project", "Description", "Severity", "Used by SLOs"])
+                for policy in self.alert_policies:
+                    writer.writerow([
+                        policy.name, policy.project, policy.description,
+                        policy.severity, policy.used_by_slos
+                    ])
+                
+                # Services section
+                writer.writerow([])
+                writer.writerow(["SERVICES"])
+                writer.writerow(["Name", "Project", "Description", "SLO Count"])
+                for service in self.services:
+                    writer.writerow([
+                        service.name, service.project, service.description, service.slo_count
+                    ])
+                
+                # SLOs without Alert Policies section
+                slos_without_policies = [slo for slo in self.slos if not slo.alert_policies]
+                if slos_without_policies:
+                    writer.writerow([])
+                    writer.writerow(["SLOS WITHOUT ALERT POLICIES"])
+                    writer.writerow(["Service", "SLO Name", "Project", "Description", "Target"])
+                    for slo in slos_without_policies:
+                        writer.writerow([
+                            slo.service, slo.name, slo.project, slo.description,
+                            slo.target
+                        ])
+                
+                # Unused Alert Policies section
+                unused_policies = [p for p in self.alert_policies if p.used_by_slos == 0]
+                if unused_policies:
+                    writer.writerow([])
+                    writer.writerow(["UNUSED ALERT POLICIES"])
+                    writer.writerow(["Name", "Project", "Description", "Severity"])
+                    for policy in unused_policies:
+                        writer.writerow([
+                            policy.name, policy.project, policy.description, policy.severity
+                        ])
+                
+                # Top Services by SLO Count section
+                if self.services:
+                    writer.writerow([])
+                    writer.writerow(["TOP SERVICES BY SLO COUNT"])
+                    writer.writerow(["Rank", "Service Name", "Project", "SLO Count", "Description"])
+                    services_by_slo_count = sorted(self.services, key=lambda x: x.slo_count, reverse=True)
+                    for i, service in enumerate(services_by_slo_count[:20], 1):
+                        writer.writerow([
+                            i, service.name, service.project, service.slo_count, service.description
+                        ])
+                
+                # Recent SLO Changes section
+                slos_with_updates = [slo for slo in self.slos if slo.updated_at]
+                if slos_with_updates:
+                    writer.writerow([])
+                    writer.writerow(["RECENT SLO CHANGES"])
+                    writer.writerow(["Display Name", "SLO Name", "Project", "Service", "Last Updated"])
+                    slos_with_updates.sort(key=lambda x: x.updated_at, reverse=True)
+                    for slo in slos_with_updates:
+                        # Get display name from raw SLO data
+                        display_name = slo.name
+                        for raw_slo in self.raw_slo_data:
+                            if (raw_slo.get("metadata", {}).get("name") == slo.name and 
+                                raw_slo.get("metadata", {}).get("project") == slo.project):
+                                display_name = raw_slo.get("metadata", {}).get("displayName", slo.name)
+                                break
+                        
+                        writer.writerow([
+                            display_name, slo.name, slo.project, slo.service,
+                            slo.updated_at
+                        ])
+                
+                # Top 10 Most Active Users section
+                if summary.top_active_users:
+                    writer.writerow([])
+                    writer.writerow(["TOP 10 MOST ACTIVE USERS"])
+                    writer.writerow(["Rank", "User", "Change Count"])
+                    for i, (user, count) in enumerate(summary.top_active_users, 1):
+                        writer.writerow([i, user, count])
+                
+                # User Activity section (if audit logs available)
+                if summary.top_active_users:
+                    writer.writerow([])
+                    writer.writerow(["USER ACTIVITY"])
+                    writer.writerow(["User", "Change Count", "Percentage"])
+                    
+                    total_changes = summary.last_7_days_changes
+                    for user, count in summary.top_active_users:
+                        percentage = (count / total_changes) * 100 if total_changes > 0 else 0
+                        writer.writerow([user, count, f"{percentage:.1f}%"])
             
         except Exception as e:
             print(f"Error during CSV export: {e}")
@@ -1801,6 +1805,7 @@ class Nobl9AccountAnalyzer:
                         'Alert Policies': alert_policies_str,
                         'Health Status': slo.health_status,
                         'Created At': slo.created_at,
+                        'Created By': slo.created_by or "",
                         'Updated At': slo.updated_at
                     })
                 
@@ -1843,6 +1848,7 @@ class Nobl9AccountAnalyzer:
                             'Alert Policies': alert_policies_str,
                             'Health Status': slo.health_status,
                             'Created At': slo.created_at,
+                            'Created By': slo.created_by or "",
                             'Updated At': slo.updated_at
                         })
                     
