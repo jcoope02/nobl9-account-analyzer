@@ -6,6 +6,13 @@ A comprehensive Python tool for analyzing Nobl9 SLO organizations, providing det
 
 The Nobl9 Account Analyzer is designed to help organizations understand and optimize their SLO implementation across projects. It provides actionable insights through detailed analysis of projects, SLOs, alert policies, services, and user activity patterns.
 
+### Scripts in this Repository
+
+- **`account_analyzer.py`**: Comprehensive account-wide analysis with multiple export formats
+- **`slo_analysis.py`**: Specialized SLO analysis with user information resolution and service details
+- **`composite_analyzer.py`**: Focused analysis of composite SLOs and their components
+- **`data_source_analyzer.py`**: Data source utilization and configuration analysis
+
 ## Features
 
 ### Core Analysis
@@ -135,6 +142,26 @@ python3 account_analyzer.py --audit-days 30
 ### Interactive Mode
 
 When run without export parameters, the tool offers an interactive export menu at completion.
+
+### SLO Analysis Script
+
+The `slo_analysis.py` script provides specialized SLO analysis with enhanced user information:
+
+```bash
+python3 slo_analysis.py --context <context_name>
+```
+
+**Features:**
+- Resolves user IDs to names and emails for SLO creators
+- Shows responsible users for each service
+- Includes SLO counts per service
+- Hyperlinks to SLOs and services in Nobl9 UI
+- Supports custom instances (us1, cg1, etc.)
+
+**Excel Export Includes:**
+- **SLOs Sheet**: Complete SLO information with creator and responsible user details
+- **Services Sheet**: Service information with SLO counts and responsible users
+- Hidden technical columns (queries, targets, etc.) for cleaner viewing
 
 ## Report Sections
 
