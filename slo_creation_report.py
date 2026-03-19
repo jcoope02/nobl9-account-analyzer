@@ -326,27 +326,57 @@ class SLOCreationAnalyzer:
         print("Fetching user information from Nobl9 API...")
         
         try:
-            # Determine custom base URL for fetch_users
-            # fetch_users expects the base URL without /api (it adds /api/usrmgmt/v2/users internally)
-            custom_base_url = None
+            import requests
+            
+            # Determine API base URL
             if self.is_custom_instance and self.base_url:
-                # Remove /api if present, fetch_users will add it
                 if self.base_url.endswith('/api'):
-                    custom_base_url = self.base_url[:-4]  # Remove '/api'
+                    api_base_url = f"{self.base_url}/usrmgmt/v2/users?limit=50"
                 else:
-                    custom_base_url = self.base_url
+                    api_base_url = f"{self.base_url}/api/usrmgmt/v2/users?limit=50"
+            else:
+                api_base_url = "https://app.nobl9.com/api/usrmgmt/v2/users?limit=50"
             
-            # Note: Nobl9 API doesn't support fetching individual users by ID
-            # Must fetch all users and filter, but we only build lookup for needed IDs
-            users = fetch_users(
-                self.access_token,
-                self.organization_id,
-                self.is_custom_instance,
-                custom_base_url
-            )
+            headers = {
+                "Authorization": f"Bearer {self.access_token}",
+                "Organization": self.organization_id
+            }
             
-            if users:
-                resolved_count = 0
+            next_token = None
+            seen_tokens = set()
+            page_count = 0
+            resolved_count = 0
+            
+            # Paginate and stop early once all needed users are found
+            while True:
+                url = api_base_url
+                if next_token:
+                    if next_token in seen_tokens:
+                        print_colored("Repeated pagination token detected - stopping", colorama.Fore.YELLOW)
+                        break
+                    seen_tokens.add(next_token)
+                    url += f"&next={next_token}"
+                
+                page_count += 1
+                
+                try:
+                    res = requests.get(url, headers=headers, timeout=10)
+                except requests.exceptions.RequestException as e:
+                    print_colored(f"Request failed: {e}", colorama.Fore.YELLOW)
+                    break
+                
+                if not res.ok:
+                    print_colored(f"API error {res.status_code}: {res.text}", colorama.Fore.YELLOW)
+                    break
+                
+                try:
+                    data = res.json()
+                except json.JSONDecodeError:
+                    print_colored("Failed to parse user data JSON", colorama.Fore.YELLOW)
+                    break
+                
+                users = data.get("users", [])
+                
                 for user in users:
                     user_id = user.get("id", "")
                     # Only process users we actually need
@@ -368,14 +398,21 @@ class SLOCreationAnalyzer:
                         }
                         resolved_count += 1
                 
-                print_colored(f"✓ Resolved {resolved_count} of {len(unique_user_ids)} creators", colorama.Fore.GREEN)
+                # Check if we've resolved all needed users - stop early!
+                if resolved_count >= len(unique_user_ids):
+                    print_colored(f"✓ Resolved all {resolved_count} creators (stopped at page {page_count})", colorama.Fore.GREEN)
+                    break
                 
-                # Show any unresolved user IDs
+                # Get next token for pagination
+                next_token = data.get("next")
+                if not next_token:
+                    break
+            
+            if resolved_count < len(unique_user_ids):
+                print_colored(f"✓ Resolved {resolved_count} of {len(unique_user_ids)} creators", colorama.Fore.GREEN)
                 unresolved = unique_user_ids - set(self.user_lookup.keys())
                 if unresolved:
                     print_colored(f"⚠ Could not resolve {len(unresolved)} user IDs", colorama.Fore.YELLOW)
-            else:
-                print_colored("⚠ No user data retrieved", colorama.Fore.YELLOW)
         
         except Exception as e:
             print_colored(f"Error fetching users: {e}", colorama.Fore.YELLOW)
