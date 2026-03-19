@@ -504,7 +504,7 @@ class SLOCreationAnalyzer:
             
             # Color code by count
             if count >= 20:
-                color = colorama.Fore.RED
+                color = colorama.Fore.GREEN
             elif count >= 10:
                 color = colorama.Fore.YELLOW
             elif count >= 5:
