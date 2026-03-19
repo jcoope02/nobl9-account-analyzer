@@ -840,7 +840,10 @@ class Nobl9AccountAnalyzer:
         
         # Count objects by project using single-pass counting
         project_counts = {}
+        # Count both regular and composite SLOs
         for slo in self.slos:
+            project_counts.setdefault(slo.project, {'slo': 0, 'service': 0, 'policy': 0})['slo'] += 1
+        for slo in self.composite_slos:
             project_counts.setdefault(slo.project, {'slo': 0, 'service': 0, 'policy': 0})['slo'] += 1
         
         for service in self.services:
@@ -1659,10 +1662,10 @@ class Nobl9AccountAnalyzer:
         """Create the summary sheet in Excel export."""
         import pandas as pd
         summary_data = {
-            'Metric': ['Generated', 'Organization', 'Total Projects', 'Total SLOs', 'Total SLO Units', 'Total Composite SLOs', 'Total Composite Components', 'Total Services', 
+            'Metric': ['Generated', 'Organization', 'Total Projects', 'Total Regular SLOs', 'Total SLO Units', 'Total Composite SLOs', 'Total Composite Components', 'Total Services', 
                       'Total Alert Policies', 'Total Data Sources', 'Total Users', 'Alert Coverage', 'Last 7 Days Changes'],
             'Value': [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), self.organization_id,
-                     summary.total_projects, summary.total_slos, summary.total_slo_units, summary.total_composite_slos, summary.total_composite_components, summary.total_services,
+                     summary.total_projects, summary.total_regular_slos, summary.total_slo_units, summary.total_composite_slos, summary.total_composite_components, summary.total_services,
                      summary.total_alert_policies, summary.total_data_sources, summary.total_users,
                      f"{summary.slo_coverage:.1f}%", summary.last_7_days_changes]
         }
