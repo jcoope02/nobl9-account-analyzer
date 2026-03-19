@@ -570,7 +570,7 @@ class SLOAnalyzer:
                     try:
                         base_url = self._get_base_url_for_links()
                         display_name_col_idx = list(slos_df.columns).index('Display Name') + 1
-                        for row_idx, slo in enumerate(self.slos, start=2):
+                        for row_idx, slo in enumerate(all_slos, start=2):
                             cell = worksheet.cell(row=row_idx, column=display_name_col_idx)
                             slo_url = f"{base_url}/slo/overview/{slo.project}/{slo.name}?org={self.organization_id}&opt=currentTimeWindow"
                             cell.hyperlink = slo_url
