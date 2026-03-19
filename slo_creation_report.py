@@ -456,6 +456,26 @@ class SLOCreationAnalyzer:
             count = week_counts[week]
             print_colored(f"Week of {week}: {count} SLOs", colorama.Fore.WHITE)
         
+        # SLOs by Project Summary
+        print_header("SLOS BY PROJECT")
+        
+        # Group by project
+        project_counts = {}
+        project_display_names = {}
+        for slo in self.new_slos:
+            project_counts[slo.project] = project_counts.get(slo.project, 0) + 1
+            project_display_names[slo.project] = slo.project_display_name
+        
+        # Sort by count descending
+        sorted_projects = sorted(project_counts.items(), key=lambda x: x[1], reverse=True)
+        
+        for project, count in sorted_projects:
+            display_name = project_display_names.get(project, project)
+            if display_name != project:
+                print_colored(f"{display_name} ({project}): {count} SLOs", colorama.Fore.WHITE)
+            else:
+                print_colored(f"{display_name}: {count} SLOs", colorama.Fore.WHITE)
+        
         # Top Creators
         print_header("TOP CREATORS")
         
@@ -502,6 +522,40 @@ class SLOCreationAnalyzer:
         
         try:
             with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+                # Tab 1: Summary by Project
+                project_summary = {}
+                project_display_names = {}
+                project_regular_counts = {}
+                project_composite_counts = {}
+                
+                for slo in self.new_slos:
+                    project = slo.project
+                    project_summary[project] = project_summary.get(project, 0) + 1
+                    project_display_names[project] = slo.project_display_name
+                    
+                    if slo.slo_type == "Regular":
+                        project_regular_counts[project] = project_regular_counts.get(project, 0) + 1
+                    else:
+                        project_composite_counts[project] = project_composite_counts.get(project, 0) + 1
+                
+                summary_data = []
+                for project in sorted(project_summary.keys(), key=lambda x: project_summary[x], reverse=True):
+                    summary_data.append({
+                        'Project': project,
+                        'Project Display Name': project_display_names[project],
+                        'Total SLOs': project_summary[project],
+                        'Regular SLOs': project_regular_counts.get(project, 0),
+                        'Composite SLOs': project_composite_counts.get(project, 0)
+                    })
+                
+                summary_df = pd.DataFrame(summary_data)
+                summary_df.to_excel(writer, sheet_name='Summary by Project', index=False)
+                
+                # Auto-adjust column widths for summary
+                summary_worksheet = writer.sheets['Summary by Project']
+                self._adjust_column_widths(summary_worksheet, summary_df)
+                
+                # Tab 2: Detailed SLO data
                 # Prepare data
                 data = []
                 for slo in self.new_slos:
