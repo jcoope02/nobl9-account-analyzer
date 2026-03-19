@@ -495,20 +495,28 @@ class SLOCreationAnalyzer:
         # SLOs by Project Summary
         print_header("SLOS BY PROJECT")
         
-        # Group by project
+        # Group by project and collect SLO Units
         project_counts = {}
         project_display_names = {}
+        project_units = {}
+        
         for slo in self.new_slos:
-            project_counts[slo.project] = project_counts.get(slo.project, 0) + 1
-            project_display_names[slo.project] = slo.project_display_name
+            project = slo.project
+            project_counts[project] = project_counts.get(project, 0) + 1
+            project_display_names[project] = slo.project_display_name
+            project_units[project] = project_units.get(project, 0) + slo.slo_units
         
         # Sort by count descending
         sorted_projects = sorted(project_counts.items(), key=lambda x: x[1], reverse=True)
         
-        # Display all projects with color coding
+        # Display in columnar format
         print()
+        print_colored(f"  {'SLOs':<6} {'Units':<6} {'Project':<50} {'Project ID'}", colorama.Fore.CYAN)
+        print_colored(f"  {'-'*6} {'-'*6} {'-'*50} {'-'*20}", colorama.Fore.CYAN)
+        
         for project, count in sorted_projects:
             display_name = project_display_names.get(project, project)
+            units = project_units.get(project, 0)
             
             # Color code by count
             if count >= 20:
@@ -520,11 +528,8 @@ class SLOCreationAnalyzer:
             else:
                 color = colorama.Fore.WHITE
             
-            # Format: "count display_name (technical_name)"
-            if display_name != project:
-                print_colored(f"  {count:3d} SLOs - {display_name} ({project})", color)
-            else:
-                print_colored(f"  {count:3d} SLOs - {display_name}", color)
+            # Format in columns
+            print_colored(f"  {count:>4}   {units:>4}   {display_name:<50} {project}", color)
         
         # Top Creators
         print_header("TOP CREATORS")
