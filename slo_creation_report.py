@@ -197,7 +197,8 @@ class SLOCreationAnalyzer:
         """Collect all projects to get display names."""
         print("Collecting projects...")
         
-        data = self._run_sloctl_command(["get", "projects", "-A"])
+        # Note: 'get projects' doesn't support -A flag, it gets all projects by default
+        data = self._run_sloctl_command(["get", "projects"])
         
         if data and isinstance(data, list):
             for item in data:
