@@ -471,12 +471,31 @@ class SLOCreationAnalyzer:
         # Sort by count descending
         sorted_projects = sorted(project_counts.items(), key=lambda x: x[1], reverse=True)
         
+        # Display all projects with visual bars and color coding
+        print()
         for project, count in sorted_projects:
             display_name = project_display_names.get(project, project)
-            if display_name != project:
-                print_colored(f"{display_name} ({project}): {count} SLOs", colorama.Fore.WHITE)
+            
+            # Create visual bar (scale: 1 char per 2 SLOs, max 50 chars)
+            bar_length = min(count // 2, 50)
+            bar = "█" * bar_length
+            
+            # Color code by count
+            if count >= 20:
+                color = colorama.Fore.RED
+            elif count >= 10:
+                color = colorama.Fore.YELLOW
+            elif count >= 5:
+                color = colorama.Fore.CYAN
             else:
-                print_colored(f"{display_name}: {count} SLOs", colorama.Fore.WHITE)
+                color = colorama.Fore.WHITE
+            
+            # Format: "count bar display_name"
+            if display_name != project:
+                print_colored(f"  {count:3d} {bar} {display_name}", color)
+                print_colored(f"      ({project})", colorama.Fore.WHITE)
+            else:
+                print_colored(f"  {count:3d} {bar} {display_name}", color)
         
         # Top Creators
         print_header("TOP CREATORS")
