@@ -70,6 +70,7 @@ class NewSLOInfo:
     service: str
     description: str
     component_count: Optional[int]
+    slo_units: int  # Number of objectives/components (billing units)
     created_at: str
     created_by: str
     days_since_creation: int
@@ -250,15 +251,23 @@ class SLOCreationAnalyzer:
             if not (self.start_date <= created_at <= self.end_date):
                 continue
             
-            # Check if composite
+            # Check if composite and calculate SLO Units
             is_composite = False
             component_count = None
+            slo_units = 0
+            
             for objective in objectives:
                 if "composite" in objective and "components" in objective.get("composite", {}):
                     is_composite = True
                     components = objective.get("composite", {}).get("components", {}).get("objectives", [])
                     component_count = len(components)
+                    # For composite SLOs, each component = 1 SLO Unit
+                    slo_units = component_count
                     break
+            
+            # For regular SLOs, each objective = 1 SLO Unit
+            if not is_composite:
+                slo_units = len(objectives)
             
             # Calculate days since creation
             days_since = (self.end_date - created_at).days
@@ -275,6 +284,7 @@ class SLOCreationAnalyzer:
                 service=spec.get("service", ""),
                 description=spec.get("description", ""),
                 component_count=component_count if is_composite else None,
+                slo_units=slo_units,
                 created_at=created_at_str,
                 created_by=spec.get("createdBy", ""),
                 days_since_creation=days_since
@@ -398,10 +408,12 @@ class SLOCreationAnalyzer:
         print_header("SUMMARY")
         regular_count = sum(1 for slo in self.new_slos if slo.slo_type == "Regular")
         composite_count = sum(1 for slo in self.new_slos if slo.slo_type == "Composite")
+        total_slo_units = sum(slo.slo_units for slo in self.new_slos)
         
         print_colored(f"Total New SLOs Created: {len(self.new_slos)}", colorama.Fore.WHITE)
         print_colored(f"  • Regular SLOs: {regular_count}", colorama.Fore.GREEN)
         print_colored(f"  • Composite SLOs: {composite_count}", colorama.Fore.GREEN)
+        print_colored(f"Total SLO Units Created: {total_slo_units}", colorama.Fore.WHITE)
         
         # Projects with new SLOs
         projects = set(slo.project for slo in self.new_slos)
@@ -570,11 +582,13 @@ class SLOCreationAnalyzer:
                 project_display_names = {}
                 project_regular_counts = {}
                 project_composite_counts = {}
+                project_slo_units = {}
                 
                 for slo in self.new_slos:
                     project = slo.project
                     project_summary[project] = project_summary.get(project, 0) + 1
                     project_display_names[project] = slo.project_display_name
+                    project_slo_units[project] = project_slo_units.get(project, 0) + slo.slo_units
                     
                     if slo.slo_type == "Regular":
                         project_regular_counts[project] = project_regular_counts.get(project, 0) + 1
@@ -588,7 +602,8 @@ class SLOCreationAnalyzer:
                         'Project Display Name': project_display_names[project],
                         'Total SLOs': project_summary[project],
                         'Regular SLOs': project_regular_counts.get(project, 0),
-                        'Composite SLOs': project_composite_counts.get(project, 0)
+                        'Composite SLOs': project_composite_counts.get(project, 0),
+                        'SLO Units': project_slo_units[project]
                     })
                 
                 summary_df = pd.DataFrame(summary_data)
@@ -620,6 +635,7 @@ class SLOCreationAnalyzer:
                         'Service': slo.service,
                         'Description': slo.description,
                         'Component Count': slo.component_count if slo.component_count else "",
+                        'SLO Units': slo.slo_units,
                         'Created At': created_display,
                         'Created By Name': user_name,
                         'Created By Email': user_email,
@@ -690,6 +706,7 @@ class SLOCreationAnalyzer:
                     'Service': slo.service,
                     'Description': slo.description,
                     'Component Count': slo.component_count if slo.component_count else "",
+                    'SLO Units': slo.slo_units,
                     'Created At': created_display,
                     'Created By Name': user_name,
                     'Created By Email': user_email,
