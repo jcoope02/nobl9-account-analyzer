@@ -66,6 +66,7 @@ class NewSLOInfo:
     display_name: str
     slo_type: str  # "Regular" or "Composite"
     project: str
+    project_display_name: str
     service: str
     description: str
     component_count: Optional[int]
@@ -98,6 +99,7 @@ class SLOCreationAnalyzer:
         self.is_custom_instance = False
         self.new_slos: List[NewSLOInfo] = []
         self.user_lookup: Dict[str, Dict[str, str]] = {}  # user_id -> {name, email}
+        self.project_lookup: Dict[str, str] = {}  # project_name -> display_name
         self.time_window_days = 0
         self.start_date = None
         self.end_date = None
@@ -191,6 +193,22 @@ class SLOCreationAnalyzer:
             print_colored(f"Error running sloctl command: {e}", colorama.Fore.YELLOW)
             return []
     
+    def collect_projects(self):
+        """Collect all projects to get display names."""
+        print("Collecting projects...")
+        
+        data = self._run_sloctl_command(["get", "projects", "-A"])
+        
+        if data and isinstance(data, list):
+            for item in data:
+                metadata = item.get("metadata", {})
+                project_name = metadata.get("name", "")
+                project_display_name = metadata.get("displayName", "") or project_name
+                if project_name:
+                    self.project_lookup[project_name] = project_display_name
+            
+            print_colored(f"✓ Loaded {len(self.project_lookup)} projects", colorama.Fore.GREEN)
+    
     def collect_new_slos(self):
         """Collect SLOs created within the time window."""
         print_header("COLLECTING SLOS")
@@ -242,11 +260,15 @@ class SLOCreationAnalyzer:
             # Calculate days since creation
             days_since = (self.end_date - created_at).days
             
+            project_name = metadata.get("project", "")
+            project_display_name = self.project_lookup.get(project_name, project_name)
+            
             slo = NewSLOInfo(
                 name=metadata.get("name", ""),
                 display_name=metadata.get("displayName", "") or metadata.get("name", ""),
                 slo_type="Composite" if is_composite else "Regular",
-                project=metadata.get("project", ""),
+                project=project_name,
+                project_display_name=project_display_name,
                 service=spec.get("service", ""),
                 description=spec.get("description", ""),
                 component_count=component_count if is_composite else None,
@@ -384,7 +406,13 @@ class SLOCreationAnalyzer:
         
         # Sort by project, then service
         for (project, service) in sorted(project_service_slos.keys()):
-            print_colored(f"\nProject: {project}", colorama.Fore.CYAN)
+            # Get project display name
+            slos = project_service_slos[(project, service)]
+            project_display = slos[0].project_display_name if slos else project
+            
+            print_colored(f"\nProject: {project_display}", colorama.Fore.CYAN)
+            if project_display != project:
+                print_colored(f"  ({project})", colorama.Fore.CYAN)
             print_colored("-" * 60, colorama.Fore.CYAN)
             print_colored(f"Service: {service}", colorama.Fore.YELLOW)
             
@@ -490,6 +518,7 @@ class SLOCreationAnalyzer:
                         'Display Name': slo.display_name,
                         'Type': slo.slo_type,
                         'Project': slo.project,
+                        'Project Display Name': slo.project_display_name,
                         'Service': slo.service,
                         'Description': slo.description,
                         'Component Count': slo.component_count if slo.component_count else "",
@@ -559,6 +588,7 @@ class SLOCreationAnalyzer:
                     'Display Name': slo.display_name,
                     'Type': slo.slo_type,
                     'Project': slo.project,
+                    'Project Display Name': slo.project_display_name,
                     'Service': slo.service,
                     'Description': slo.description,
                     'Component Count': slo.component_count if slo.component_count else "",
@@ -608,6 +638,9 @@ def main():
         
         # Select time period
         analyzer.select_time_period()
+        
+        # Collect projects (for display names)
+        analyzer.collect_projects()
         
         # Collect new SLOs
         analyzer.collect_new_slos()
