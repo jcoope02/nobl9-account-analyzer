@@ -518,18 +518,8 @@ class SLOCreationAnalyzer:
             display_name = project_display_names.get(project, project)
             units = project_units.get(project, 0)
             
-            # Color code by count
-            if count >= 20:
-                color = colorama.Fore.GREEN
-            elif count >= 10:
-                color = colorama.Fore.YELLOW
-            elif count >= 5:
-                color = colorama.Fore.CYAN
-            else:
-                color = colorama.Fore.WHITE
-            
             # Format in columns
-            print_colored(f"  {count:>4}   {units:>4}   {display_name:<50} {project}", color)
+            print_colored(f"  {count:>4}   {units:>4}   {display_name:<50} {project}", colorama.Fore.WHITE)
         
         # Top Creators
         print_header("TOP CREATORS")
