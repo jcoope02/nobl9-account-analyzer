@@ -514,8 +514,9 @@ class SLOCreationAnalyzer:
         # Creation Timeline
         print_header("CREATION TIMELINE")
         
-        # Group by week
+        # Group by week and track both SLO count and units
         week_counts = {}
+        week_units = {}
         for slo in self.new_slos:
             try:
                 created_dt = datetime.strptime(slo.created_at, "%Y-%m-%dT%H:%M:%SZ")
@@ -523,12 +524,14 @@ class SLOCreationAnalyzer:
                 week_start = created_dt - timedelta(days=created_dt.weekday())
                 week_key = week_start.strftime("%Y-%m-%d")
                 week_counts[week_key] = week_counts.get(week_key, 0) + 1
+                week_units[week_key] = week_units.get(week_key, 0) + slo.slo_units
             except ValueError:
                 continue
         
         for week in sorted(week_counts.keys()):
             count = week_counts[week]
-            print_colored(f"Week of {week}: {count} SLOs", colorama.Fore.WHITE)
+            units = week_units[week]
+            print_colored(f"Week of {week}: {count} SLOs ({units} Units)", colorama.Fore.WHITE)
         
         # SLOs by Project Summary
         print_header("SLOS BY PROJECT")
@@ -629,9 +632,9 @@ class SLOCreationAnalyzer:
                         'Project': project,
                         'Project Display Name': project_display_names[project],
                         'Total SLOs': project_summary[project],
+                        'SLO Units': project_slo_units[project],
                         'Regular SLOs': project_regular_counts.get(project, 0),
-                        'Composite SLOs': project_composite_counts.get(project, 0),
-                        'SLO Units': project_slo_units[project]
+                        'Composite SLOs': project_composite_counts.get(project, 0)
                     })
                 
                 summary_df = pd.DataFrame(summary_data)
