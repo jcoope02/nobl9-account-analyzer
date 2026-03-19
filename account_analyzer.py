@@ -146,7 +146,7 @@ class AuditLogEntry:
 @dataclass
 class AccountSummary:
     total_projects: int
-    total_slos: int
+    total_regular_slos: int  # Regular (non-composite) SLOs
     total_composite_slos: int
     total_composite_components: int
     total_services: int
@@ -565,7 +565,8 @@ class Nobl9AccountAnalyzer:
                 )
                 self.slos.append(slo)
         
-        print(f"Collected SLOs (Total: {len(self.slos)}, Composite: {len(self.composite_slos)})")
+        total_slos = len(self.slos) + len(self.composite_slos)
+        print(f"Collected SLOs (Total {total_slos}: {len(self.slos)} Regular SLOs, {len(self.composite_slos)} Composite SLOs)")
     
     def _extract_slo_queries(self, spec: Dict) -> Tuple[str, str, str]:
         """Extract queries from SLO spec.
@@ -855,9 +856,13 @@ class Nobl9AccountAnalyzer:
             project.service_count = counts['service']
             project.alert_policy_count = counts['policy']
         
-        # Count SLOs using each alert policy using single-pass counting
+        # Count SLOs using each alert policy using single-pass counting (include composites)
         policy_usage = {policy.name: 0 for policy in self.alert_policies}
         for slo in self.slos:
+            for policy_name in slo.alert_policies:
+                if policy_name in policy_usage:
+                    policy_usage[policy_name] += 1
+        for slo in self.composite_slos:
             for policy_name in slo.alert_policies:
                 if policy_name in policy_usage:
                     policy_usage[policy_name] += 1
@@ -865,9 +870,12 @@ class Nobl9AccountAnalyzer:
         for policy in self.alert_policies:
             policy.used_by_slos = policy_usage.get(policy.name, 0)
         
-        # Count SLOs per service using efficient dictionary lookup
+        # Count SLOs per service using efficient dictionary lookup (include composites)
         service_slo_counts = {}
         for slo in self.slos:
+            key = (slo.service, slo.project)
+            service_slo_counts[key] = service_slo_counts.get(key, 0) + 1
+        for slo in self.composite_slos:
             key = (slo.service, slo.project)
             service_slo_counts[key] = service_slo_counts.get(key, 0) + 1
         
@@ -976,7 +984,7 @@ class Nobl9AccountAnalyzer:
         
         summary = AccountSummary(
             total_projects=len(self.projects),
-            total_slos=len(self.slos),
+            total_regular_slos=len(self.slos),
             total_composite_slos=len(self.composite_slos),
             total_composite_components=sum(slo.component_count for slo in self.composite_slos),
             total_services=len(self.services),
@@ -1021,7 +1029,7 @@ class Nobl9AccountAnalyzer:
         # Executive Summary
         print_header("EXECUTIVE SUMMARY")
         print_colored(f"Total Projects: {summary.total_projects}", colorama.Fore.WHITE)
-        print_colored(f"Total SLOs: {summary.total_slos}", colorama.Fore.WHITE)
+        print_colored(f"Total Regular SLOs: {summary.total_regular_slos}", colorama.Fore.WHITE)
         print_colored(f"Total SLO Units: {summary.total_slo_units}", colorama.Fore.WHITE)
         print_colored(f"Total Composite SLOs: {summary.total_composite_slos}", colorama.Fore.WHITE)
         print_colored(f"Total Composite Components: {summary.total_composite_components}", colorama.Fore.WHITE)
@@ -1428,7 +1436,7 @@ class Nobl9AccountAnalyzer:
                 writer.writerow([])
                 writer.writerow(["Metric", "Value"])
                 writer.writerow(["Total Projects", summary.total_projects])
-                writer.writerow(["Total SLOs", summary.total_slos])
+                writer.writerow(["Total Regular SLOs", summary.total_regular_slos])
                 writer.writerow(["Total SLO Units", summary.total_slo_units])
                 writer.writerow(["Total Composite SLOs", summary.total_composite_slos])
                 writer.writerow(["Total Composite Components", summary.total_composite_components])
@@ -1740,10 +1748,10 @@ class Nobl9AccountAnalyzer:
             with pd.ExcelWriter(filename, engine='openpyxl') as writer:
                 # Summary sheet
                 summary_data = {
-                    'Metric': ['Generated', 'Organization', 'Total Projects', 'Total SLOs', 'Total SLO Units', 'Total Composite SLOs', 'Total Composite Components', 'Total Services', 
+                    'Metric': ['Generated', 'Organization', 'Total Projects', 'Total Regular SLOs', 'Total SLO Units', 'Total Composite SLOs', 'Total Composite Components', 'Total Services', 
                               'Total Alert Policies', 'Total Data Sources', 'Total Users', 'Alert Coverage', 'Last 7 Days Changes'],
                     'Value': [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), self.organization_id,
-                             summary.total_projects, summary.total_slos, summary.total_slo_units, summary.total_composite_slos, summary.total_composite_components, summary.total_services,
+                             summary.total_projects, summary.total_regular_slos, summary.total_slo_units, summary.total_composite_slos, summary.total_composite_components, summary.total_services,
                              summary.total_alert_policies, summary.total_data_sources, summary.total_users,
                              f"{summary.slo_coverage:.1f}%", summary.last_7_days_changes]
                 }
