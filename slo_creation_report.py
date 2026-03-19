@@ -511,7 +511,7 @@ class SLOCreationAnalyzer:
         
         # Display in columnar format
         print()
-        print_colored(f"  {'SLOs':<6} {'Units':<6} {'Project':<50} {'Project ID'}", colorama.Fore.CYAN)
+        print_colored(f"  {'SLOs':<6} {'Units':<6} {'Project':<50} {'Name'}", colorama.Fore.CYAN)
         print_colored(f"  {'-'*6} {'-'*6} {'-'*50} {'-'*20}", colorama.Fore.CYAN)
         
         for project, count in sorted_projects:
