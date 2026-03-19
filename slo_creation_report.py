@@ -126,8 +126,24 @@ class SLOCreationAnalyzer:
         
         print_colored("✓ Authentication successful", colorama.Fore.GREEN)
         
-        # Switch sloctl to the selected context
-        self._switch_sloctl_context()
+        # Switch sloctl context
+        print(f"\nSwitching to context: {self.context_name}")
+        try:
+            result = subprocess.run(
+                ["sloctl", "context", "use", self.context_name],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            print_colored("✓ Context switched successfully", colorama.Fore.GREEN)
+        except subprocess.CalledProcessError as e:
+            print_colored(f"ERROR: Failed to switch context: {e}", colorama.Fore.RED)
+            if e.stderr:
+                print_colored(f"stderr: {e.stderr}", colorama.Fore.RED)
+            sys.exit(1)
+        
+        print(f"Loaded configuration for organization: {self.organization_id}")
+        print(f"Organization: {self.organization_id}")
     
     def select_time_period(self):
         """Prompt user to select time period."""
@@ -163,53 +179,6 @@ class SLOCreationAnalyzer:
         except KeyboardInterrupt:
             print_colored("\n\nOperation cancelled by user", colorama.Fore.YELLOW)
             sys.exit(0)
-    
-    def _switch_sloctl_context(self):
-        """Switch sloctl to the selected context."""
-        try:
-            print(f"\nSwitching to context: {self.context_name}")
-            result = subprocess.run(
-                ["sloctl", "context", "use", self.context_name],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            print_colored("✓ Context switched successfully", colorama.Fore.GREEN)
-            
-            # Verify the context switch
-            result = subprocess.run(
-                ["sloctl", "config", "current-context"],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            current_context = result.stdout.strip()
-            
-            if current_context != self.context_name:
-                print_colored(f"⚠ Warning: Current context is '{current_context}', expected '{self.context_name}'", 
-                            colorama.Fore.YELLOW)
-            
-            # Get organization from config
-            result = subprocess.run(
-                ["sloctl", "config", "get-contexts", self.context_name, "-o", "json"],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            
-            if result.stdout:
-                config_data = json.loads(result.stdout)
-                org = config_data.get("organization", "")
-                if org:
-                    print(f"Loaded configuration for organization: {org}")
-                    print(f"Organization: {org}")
-                    
-        except subprocess.CalledProcessError as e:
-            print_colored(f"Error switching context: {e}", colorama.Fore.RED)
-            print_colored(f"Error output: {e.stderr if e.stderr else 'No error output'}", colorama.Fore.RED)
-            sys.exit(1)
-        except json.JSONDecodeError as e:
-            print_colored(f"Error parsing context config: {e}", colorama.Fore.YELLOW)
     
     def _run_sloctl_command(self, args: List[str]) -> List[Dict]:
         """Run sloctl command and return parsed JSON output."""
