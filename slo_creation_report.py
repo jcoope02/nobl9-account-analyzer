@@ -284,8 +284,19 @@ class SLOCreationAnalyzer:
                 for user in users:
                     user_id = user.get("id", "")
                     if user_id:
+                        first_name = user.get('firstName', '').strip()
+                        last_name = user.get('lastName', '').strip()
+                        
+                        # Build full name, fallback to email or Unknown User
+                        if first_name or last_name:
+                            full_name = f"{first_name} {last_name}".strip()
+                        elif user.get("email"):
+                            full_name = user.get("email")
+                        else:
+                            full_name = "Unknown User"
+                        
                         self.user_lookup[user_id] = {
-                            "name": f"{user.get('firstName', '')} {user.get('lastName', '')}".strip() or user_id,
+                            "name": full_name,
                             "email": user.get("email", "")
                         }
                 
@@ -301,8 +312,12 @@ class SLOCreationAnalyzer:
         if not user_id:
             return ("", "")
         
-        user_info = self.user_lookup.get(user_id, {})
-        return (user_info.get("name", user_id), user_info.get("email", ""))
+        user_info = self.user_lookup.get(user_id)
+        if user_info:
+            return (user_info.get("name", "Unknown User"), user_info.get("email", ""))
+        else:
+            # User not found in lookup - show as unknown
+            return ("Unknown User", "")
     
     def display_console_report(self):
         """Display creation report in console."""
