@@ -304,6 +304,115 @@ class SLOCreationAnalyzer:
         user_info = self.user_lookup.get(user_id, {})
         return (user_info.get("name", user_id), user_info.get("email", ""))
     
+    def display_console_report(self):
+        """Display creation report in console."""
+        if not self.new_slos:
+            print_colored("\n⚠ No new SLOs found in the selected time period", colorama.Fore.YELLOW)
+            return
+        
+        print_header("SLO CREATION REPORT")
+        print_colored(f"Time Period: Last {self.time_window_days} Days", colorama.Fore.WHITE)
+        print_colored(f"  From: {self.start_date.strftime('%Y-%m-%d %H:%M:%S')}", colorama.Fore.WHITE)
+        print_colored(f"  To:   {self.end_date.strftime('%Y-%m-%d %H:%M:%S')}", colorama.Fore.WHITE)
+        print_colored(f"Organization: {self.organization_id}", colorama.Fore.WHITE)
+        
+        # Summary
+        print_header("SUMMARY")
+        regular_count = sum(1 for slo in self.new_slos if slo.slo_type == "Regular")
+        composite_count = sum(1 for slo in self.new_slos if slo.slo_type == "Composite")
+        
+        print_colored(f"Total New SLOs Created: {len(self.new_slos)}", colorama.Fore.WHITE)
+        print_colored(f"  • Regular SLOs: {regular_count}", colorama.Fore.GREEN)
+        print_colored(f"  • Composite SLOs: {composite_count}", colorama.Fore.GREEN)
+        
+        # Projects with new SLOs
+        projects = set(slo.project for slo in self.new_slos)
+        print_colored(f"Projects with New SLOs: {len(projects)}", colorama.Fore.WHITE)
+        
+        # Most active creator
+        creator_counts = {}
+        for slo in self.new_slos:
+            creator_name, _ = self.resolve_user_info(slo.created_by)
+            if creator_name:
+                creator_counts[creator_name] = creator_counts.get(creator_name, 0) + 1
+        
+        if creator_counts:
+            most_active = max(creator_counts.items(), key=lambda x: x[1])
+            print_colored(f"Most Active Creator: {most_active[0]} ({most_active[1]} SLOs)", colorama.Fore.WHITE)
+        
+        # New SLOs by Project
+        print_header("NEW SLOS BY PROJECT")
+        
+        # Group by project and service
+        project_service_slos = {}
+        for slo in self.new_slos:
+            key = (slo.project, slo.service)
+            if key not in project_service_slos:
+                project_service_slos[key] = []
+            project_service_slos[key].append(slo)
+        
+        # Sort by project, then service
+        for (project, service) in sorted(project_service_slos.keys()):
+            print_colored(f"\nProject: {project}", colorama.Fore.CYAN)
+            print_colored("-" * 60, colorama.Fore.CYAN)
+            print_colored(f"Service: {service}", colorama.Fore.YELLOW)
+            
+            slos = project_service_slos[(project, service)]
+            for slo in sorted(slos, key=lambda x: x.created_at, reverse=True):
+                user_name, user_email = self.resolve_user_info(slo.created_by)
+                
+                # Format created_at
+                try:
+                    created_dt = datetime.strptime(slo.created_at, "%Y-%m-%dT%H:%M:%SZ")
+                    created_display = created_dt.strftime("%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    created_display = slo.created_at
+                
+                slo_type_display = f"[{slo.slo_type}]"
+                if slo.component_count:
+                    slo_type_display += f" ({slo.component_count} components)"
+                
+                print_colored(f"  {slo_type_display} {slo.display_name or slo.name}", colorama.Fore.WHITE)
+                print_colored(f"    Created: {created_display}", colorama.Fore.WHITE)
+                if user_name:
+                    print_colored(f"    Created By: {user_name} ({user_email})", colorama.Fore.WHITE)
+        
+        # Creation Timeline
+        print_header("CREATION TIMELINE")
+        
+        # Group by week
+        week_counts = {}
+        for slo in self.new_slos:
+            try:
+                created_dt = datetime.strptime(slo.created_at, "%Y-%m-%dT%H:%M:%SZ")
+                # Get start of week (Monday)
+                week_start = created_dt - timedelta(days=created_dt.weekday())
+                week_key = week_start.strftime("%Y-%m-%d")
+                week_counts[week_key] = week_counts.get(week_key, 0) + 1
+            except ValueError:
+                continue
+        
+        for week in sorted(week_counts.keys()):
+            count = week_counts[week]
+            print_colored(f"Week of {week}: {count} SLOs", colorama.Fore.WHITE)
+        
+        # Top Creators
+        print_header("TOP CREATORS")
+        
+        # Sort creators by count
+        sorted_creators = sorted(creator_counts.items(), key=lambda x: x[1], reverse=True)
+        
+        for i, (creator, count) in enumerate(sorted_creators[:10], 1):
+            # Get email for this creator
+            email = ""
+            for slo in self.new_slos:
+                creator_name, creator_email = self.resolve_user_info(slo.created_by)
+                if creator_name == creator:
+                    email = creator_email
+                    break
+            
+            print_colored(f"{i:2d}. {creator} ({email}) - {count} SLOs", colorama.Fore.WHITE)
+    
     def _get_base_url_for_links(self) -> str:
         """Get the base URL for hyperlinks, handling custom instances."""
         if self.is_custom_instance and self.base_url:
@@ -474,6 +583,9 @@ def main():
         
         # Fetch user information
         analyzer.fetch_user_information()
+        
+        # Display console report
+        analyzer.display_console_report()
         
         # Export
         if args.format == "excel":
