@@ -506,6 +506,7 @@ class SLOCreationAnalyzer:
                     slo_type_display += f" ({slo.component_count} components)"
                 
                 print_colored(f"  {slo_type_display} {slo.display_name or slo.name}", colorama.Fore.WHITE)
+                print_colored(f"    SLO Units: {slo.slo_units}", colorama.Fore.WHITE)
                 print_colored(f"    Created: {created_display}", colorama.Fore.WHITE)
                 if user_name:
                     print_colored(f"    Created By: {user_name} ({user_email})", colorama.Fore.WHITE)
