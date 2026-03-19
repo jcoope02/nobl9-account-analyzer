@@ -191,6 +191,20 @@ class SLOAnalyzer:
             else:
                 slo_target = spec.get("target", 0.0)
             
+            # Calculate SLO Units
+            # For regular SLOs: count objectives
+            # For composite SLOs: count components
+            slo_units = 0
+            if is_composite:
+                # Count components in composite SLO
+                for objective in objectives:
+                    composite = objective.get("composite", {})
+                    components = composite.get("components", [])
+                    slo_units += len(components)
+            else:
+                # Count objectives for regular SLO
+                slo_units = len(objectives)
+            
             # Extract queries (skip for composite SLOs)
             query, numerator_query, denominator_query = "", "", ""
             if not is_composite:
@@ -214,8 +228,9 @@ class SLOAnalyzer:
                 created_by=spec.get("createdBy", "")
             )
             
-            # Store SLO type as an attribute for export
+            # Store SLO type and units as attributes for export
             slo.slo_type = "Composite" if is_composite else "Regular"
+            slo.slo_units = slo_units
             
             # Add to appropriate list
             if is_composite:
@@ -231,7 +246,9 @@ class SLOAnalyzer:
         print_colored(f"✓ Collected {len(self.composite_slos)} composite SLOs", colorama.Fore.GREEN)
         print_colored("-" * 60, colorama.Fore.CYAN)
         total_slos = len(self.slos) + len(self.composite_slos)
+        total_slo_units = sum(getattr(slo, 'slo_units', 0) for slo in self.slos) + sum(getattr(slo, 'slo_units', 0) for slo in self.composite_slos)
         print_colored(f"Total: {total_slos} SLOs", colorama.Fore.GREEN)
+        print_colored(f"Total SLO Units: {total_slo_units}", colorama.Fore.GREEN)
     
     def _count_slos_per_service(self) -> None:
         """Count the number of SLOs for each service (including composites)."""
@@ -506,6 +523,7 @@ class SLOAnalyzer:
                         'Project': slo.project,
                         'Service': slo.service,
                         'Description': slo.description,
+                        'SLO Units': getattr(slo, 'slo_units', 0),
                         'Target': slo.target,
                         'Query': query_col,
                         'Numerator Query': numerator_col,
@@ -526,7 +544,7 @@ class SLOAnalyzer:
                     print_colored("Warning: No SLO data to export", colorama.Fore.YELLOW)
                     # Create empty DataFrame with expected columns to avoid "no visible sheet" error
                     slos_df = pd.DataFrame(columns=[
-                        'Name', 'Display Name', 'Type', 'Project', 'Service', 'Description', 'Target',
+                        'Name', 'Display Name', 'Type', 'Project', 'Service', 'Description', 'SLO Units', 'Target',
                         'Query', 'Numerator Query', 'Denominator Query', 'Time Window',
                         'Alert Policies', 'Health Status', 'Updated At', 'Created At',
                         'Created By ID', 'Created By Name', 'Created By Email',
