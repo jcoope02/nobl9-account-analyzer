@@ -103,6 +103,7 @@ class CompositeSLOComponent:
 class CompositeSLOInfo:
     name: str
     project: str
+    service: str  # Service associated with composite SLO
     description: str
     components: List[CompositeSLOComponent]  # List of component SLOs with details
     component_count: int
@@ -515,6 +516,7 @@ class Nobl9AccountAnalyzer:
                     composite_slo = CompositeSLOInfo(
                         name=metadata.get("name", ""),
                         project=metadata.get("project", ""),
+                        service=spec.get("service", ""),
                         description=spec.get("description", ""),
                         components=composite_components,
                         component_count=len(composite_components),
@@ -1852,6 +1854,7 @@ class Nobl9AccountAnalyzer:
                         composite_slos_data.append({
                             'Name': slo.name,
                             'Project': slo.project,
+                            'Service': slo.service,
                             'Description': slo.description,
                             'Component Count': slo.component_count,
                             'Target': slo.target,
