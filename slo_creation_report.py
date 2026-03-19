@@ -152,15 +152,17 @@ class SLOCreationAnalyzer:
         print("  [2] Last 2 weeks (14 days)")
         print("  [3] Last 1 month (30 days)")
         print("  [4] Last 3 months (90 days)")
+        print("  [5] Last 4 months (120 days)")
         
         try:
-            choice = input("\nEnter your choice (1-4): ").strip()
+            choice = input("\nEnter your choice (1-5): ").strip()
             
             time_periods = {
                 '1': 7,
                 '2': 14,
                 '3': 30,
-                '4': 90
+                '4': 90,
+                '5': 120
             }
             
             if choice not in time_periods:
