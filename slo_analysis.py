@@ -214,6 +214,9 @@ class SLOAnalyzer:
                 created_by=spec.get("createdBy", "")
             )
             
+            # Store SLO type as an attribute for export
+            slo.slo_type = "Composite" if is_composite else "Regular"
+            
             # Add to appropriate list
             if is_composite:
                 self.composite_slos.append(slo)
@@ -499,6 +502,7 @@ class SLOAnalyzer:
                     slos_data.append({
                         'Name': slo.name,
                         'Display Name': slo.display_name or slo.name,
+                        'Type': getattr(slo, 'slo_type', 'Regular'),
                         'Project': slo.project,
                         'Service': slo.service,
                         'Description': slo.description,
@@ -522,7 +526,7 @@ class SLOAnalyzer:
                     print_colored("Warning: No SLO data to export", colorama.Fore.YELLOW)
                     # Create empty DataFrame with expected columns to avoid "no visible sheet" error
                     slos_df = pd.DataFrame(columns=[
-                        'Name', 'Display Name', 'Project', 'Service', 'Description', 'Target',
+                        'Name', 'Display Name', 'Type', 'Project', 'Service', 'Description', 'Target',
                         'Query', 'Numerator Query', 'Denominator Query', 'Time Window',
                         'Alert Policies', 'Health Status', 'Updated At', 'Created At',
                         'Created By ID', 'Created By Name', 'Created By Email',
