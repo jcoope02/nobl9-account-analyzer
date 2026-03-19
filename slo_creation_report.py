@@ -127,13 +127,11 @@ class SLOCreationAnalyzer:
         print_colored("✓ Authentication successful", colorama.Fore.GREEN)
         
         # Switch sloctl context
-        print(f"\nSwitching to context: {self.context_name}")
+        print_colored(f"\nSwitching to context: {self.context_name}", colorama.Fore.CYAN)
         try:
-            result = subprocess.run(
-                ["sloctl", "context", "use", self.context_name],
-                capture_output=True,
-                text=True,
-                check=True
+            subprocess.run(
+                ["sloctl", "config", "use-context", self.context_name],
+                capture_output=True, text=True, check=True
             )
             print_colored("✓ Context switched successfully", colorama.Fore.GREEN)
         except subprocess.CalledProcessError as e:
@@ -142,8 +140,7 @@ class SLOCreationAnalyzer:
                 print_colored(f"stderr: {e.stderr}", colorama.Fore.RED)
             sys.exit(1)
         
-        print(f"Loaded configuration for organization: {self.organization_id}")
-        print(f"Organization: {self.organization_id}")
+        print_colored(f"Organization: {self.organization_id}", colorama.Fore.GREEN)
     
     def select_time_period(self):
         """Prompt user to select time period."""
