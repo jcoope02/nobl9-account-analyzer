@@ -273,7 +273,12 @@ class SLOCreationAnalyzer:
                 else:
                     custom_base_url = self.base_url
             
-            users = fetch_users(self.access_token, custom_base_url, is_custom_instance=self.is_custom_instance)
+            users = fetch_users(
+                self.access_token,
+                self.organization_id,
+                self.is_custom_instance,
+                custom_base_url
+            )
             
             if users:
                 for user in users:
