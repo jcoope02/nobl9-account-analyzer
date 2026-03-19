@@ -296,12 +296,24 @@ class SLOCreationAnalyzer:
         print_colored(f"  • Composite SLOs: {composite_count}", colorama.Fore.WHITE)
     
     def fetch_user_information(self):
-        """Fetch user information to resolve user IDs."""
+        """Fetch user information to resolve user IDs (optimized to only fetch needed users)."""
         if not self.new_slos:
             return
         
         print_header("FETCHING USER INFORMATION")
-        print("Resolving user IDs to names and emails...")
+        
+        # First, identify unique user IDs we need to resolve
+        unique_user_ids = set()
+        for slo in self.new_slos:
+            if slo.created_by:
+                unique_user_ids.add(slo.created_by)
+        
+        if not unique_user_ids:
+            print_colored("No user IDs to resolve", colorama.Fore.YELLOW)
+            return
+        
+        print(f"Found {len(unique_user_ids)} unique creators to resolve...")
+        print("Fetching user information from Nobl9 API...")
         
         try:
             # Determine custom base URL for fetch_users
@@ -314,6 +326,8 @@ class SLOCreationAnalyzer:
                 else:
                     custom_base_url = self.base_url
             
+            # Note: Nobl9 API doesn't support fetching individual users by ID
+            # Must fetch all users and filter, but we only build lookup for needed IDs
             users = fetch_users(
                 self.access_token,
                 self.organization_id,
@@ -322,9 +336,11 @@ class SLOCreationAnalyzer:
             )
             
             if users:
+                resolved_count = 0
                 for user in users:
                     user_id = user.get("id", "")
-                    if user_id:
+                    # Only process users we actually need
+                    if user_id and user_id in unique_user_ids:
                         first_name = user.get('firstName', '').strip()
                         last_name = user.get('lastName', '').strip()
                         
@@ -340,8 +356,14 @@ class SLOCreationAnalyzer:
                             "name": full_name,
                             "email": user.get("email", "")
                         }
+                        resolved_count += 1
                 
-                print_colored(f"✓ Loaded {len(self.user_lookup)} users", colorama.Fore.GREEN)
+                print_colored(f"✓ Resolved {resolved_count} of {len(unique_user_ids)} creators", colorama.Fore.GREEN)
+                
+                # Show any unresolved user IDs
+                unresolved = unique_user_ids - set(self.user_lookup.keys())
+                if unresolved:
+                    print_colored(f"⚠ Could not resolve {len(unresolved)} user IDs", colorama.Fore.YELLOW)
             else:
                 print_colored("⚠ No user data retrieved", colorama.Fore.YELLOW)
         
