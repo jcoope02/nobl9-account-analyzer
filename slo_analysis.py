@@ -96,6 +96,7 @@ class SLOAnalyzer:
         self.base_url = "https://app.nobl9.com"
         self.is_custom_instance = False
         self.slos: List[SLOInfo] = []
+        self.composite_slos: List[SLOInfo] = []
         self.services: List[Dict] = []
         self.user_lookup: Dict[str, Dict[str, str]] = {}  # user_id -> {name, email}
         self.service_responsible_users: Dict[Tuple[str, str], List[str]] = {}  # (project, service_name) -> [user_ids]
@@ -173,20 +174,16 @@ class SLOAnalyzer:
             spec = item.get("spec", {})
             objectives = spec.get("objectives", [])
             
-            # Check if composite SLO (skip for now, focus on regular SLOs)
-            composite_components = []
+            # Check if composite SLO
+            is_composite = False
             for objective in objectives:
                 if "composite" in objective and "components" in objective.get("composite", {}):
-                    composite_components.append(objective)
+                    is_composite = True
                     break
-            
-            # Skip composite SLOs for this analysis
-            if composite_components:
-                continue
             
             # Get target
             slo_target = 0.0
-            if objectives and not composite_components:
+            if objectives and not is_composite:
                 for objective in objectives:
                     if "target" in objective:
                         slo_target = objective.get("target", 0.0)
@@ -194,8 +191,10 @@ class SLOAnalyzer:
             else:
                 slo_target = spec.get("target", 0.0)
             
-            # Extract queries
-            query, numerator_query, denominator_query = self._extract_slo_queries(spec)
+            # Extract queries (skip for composite SLOs)
+            query, numerator_query, denominator_query = "", "", ""
+            if not is_composite:
+                query, numerator_query, denominator_query = self._extract_slo_queries(spec)
             
             slo = SLOInfo(
                 name=metadata.get("name", ""),
@@ -214,17 +213,29 @@ class SLOAnalyzer:
                 denominator_query=denominator_query,
                 created_by=spec.get("createdBy", "")
             )
-            self.slos.append(slo)
+            
+            # Add to appropriate list
+            if is_composite:
+                self.composite_slos.append(slo)
+            else:
+                self.slos.append(slo)
         
         # Count SLOs per service
         self._count_slos_per_service()
         
-        print_colored(f"✓ Collected {len(self.slos)} SLOs", colorama.Fore.GREEN)
+        # Print summary
+        print_colored(f"✓ Collected {len(self.slos)} regular SLOs", colorama.Fore.GREEN)
+        print_colored(f"✓ Collected {len(self.composite_slos)} composite SLOs", colorama.Fore.GREEN)
+        print_colored("-" * 60, colorama.Fore.CYAN)
+        total_slos = len(self.slos) + len(self.composite_slos)
+        print_colored(f"Total: {total_slos} SLOs", colorama.Fore.GREEN)
     
     def _count_slos_per_service(self) -> None:
-        """Count the number of SLOs for each service."""
+        """Count the number of SLOs for each service (including composites)."""
         self.service_slo_counts.clear()
-        for slo in self.slos:
+        # Count both regular and composite SLOs
+        all_slos = self.slos + self.composite_slos
+        for slo in all_slos:
             if slo.project and slo.service:
                 key = (slo.project, slo.service)
                 self.service_slo_counts[key] = self.service_slo_counts.get(key, 0) + 1
@@ -459,9 +470,10 @@ class SLOAnalyzer:
         
         try:
             with pd.ExcelWriter(filename, engine='openpyxl') as writer:
-                # SLOs with user information
+                # SLOs with user information (include both regular and composite SLOs)
+                all_slos = self.slos + self.composite_slos
                 slos_data = []
-                for slo in self.slos:
+                for slo in all_slos:
                     user_name, user_email = self.resolve_user_info(slo.created_by)
                     
                     # Get responsible users for this SLO's service
