@@ -193,10 +193,21 @@ def load_contexts_from_toml() -> Dict[str, Dict[str, Any]]:
 
         for ctx_name, creds in raw_contexts.items():
             if "clientId" in creds and "clientSecret" in creds:
+                okta_org_url = creds.get("oktaOrgURL", "")
+                okta_auth_server = creds.get("oktaAuthServer")
+                
+                # Detect custom instance from either 'url' field or 'oktaOrgURL'
                 is_custom_instance = "url" in creds
                 base_url = creds.get("url")
-                okta_org_url = creds.get("oktaOrgURL")
-                okta_auth_server = creds.get("oktaAuthServer")
+                
+                # Check if oktaOrgURL indicates a custom instance (us1, cg1, etc.)
+                if not is_custom_instance and okta_org_url:
+                    if "us1.nobl9.com" in okta_org_url.lower():
+                        is_custom_instance = True
+                        base_url = "https://us1.nobl9.com/api"
+                    elif "cg1.nobl9.com" in okta_org_url.lower():
+                        is_custom_instance = True
+                        base_url = "https://cg1.nobl9.com/api"
 
                 parsed_contexts[ctx_name] = {
                     "clientId": creds["clientId"],
