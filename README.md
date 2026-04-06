@@ -12,6 +12,8 @@ The Nobl9 Account Analyzer is designed to help organizations understand and opti
 - **`slo_analysis.py`**: Specialized SLO analysis with user information resolution and service details
 - **`composite_analyzer.py`**: Focused analysis of composite SLOs and their components
 - **`data_source_analyzer.py`**: Data source utilization and configuration analysis
+- **`slo_creation_report.py`**: Track SLO creation activity over configurable time periods
+- **`error_budget_report.py`**: Analyze error budget consumption and identify SLOs with high burn rates
 
 ## Features
 
@@ -358,11 +360,43 @@ This tool is provided as-is for analysis purposes. Ensure compliance with your o
 - ✅ **Error Clarity**: Clear success/failure messages for audit log collection
 - ✅ **Export Consistency**: "Alert Coverage" terminology updated
 
+---
+
+## Error Budget Burn Report
+
+**Script:** `error_budget_report.py`
+
+Analyzes SLO error budget consumption over configurable time periods to identify SLOs with high error budget burn.
+
+### Features
+- **Time Period Selection**: 24 hours, 7 days, 14 days, or 28 days
+- **Custom Threshold**: Set minimum budget drop percentage (default: 10%)
+- **Status API Integration**: Fetches real-time error budget data from Nobl9 Status API v2
+- **Severity Classification**: CRITICAL (≥50% burn), WARNING (≥25%), NOTICE (<25%)
+- **Comprehensive Statistics**: Average burn, max burn, burn rates
+- **Export Options**: Excel with hyperlinks or CSV format
+
+### Usage
+```bash
+python3 error_budget_report.py
+python3 error_budget_report.py --context ticketmaster
+python3 error_budget_report.py --csv
+```
+
+### Excel Export Columns
+- SLO Name, Display Name (hyperlinked), Severity
+- Project, Service, Type
+- Budget Remaining %, Budget Burned %, Burn Rate
+- Target, Status, Time Window, Alert Policies
+
+---
+
 ## Version History
 
-- **v1.0**: Initial release with core analysis features
-- **v1.1**: Added Excel export and enhanced data source analysis
-- **v1.2**: Integrated Nobl9 Reports API and improved efficiency
-- **v1.3**: Enhanced error handling and added interactive export options
-- **v1.4**: Fixed critical metrics display and improved reliability
+- **v1.6**: Added error budget burn analysis with Status API v2 integration
 - **v1.5**: Added SLO query extraction, hyperlinks, and improved export structure
+- **v1.4**: Fixed critical metrics display and improved reliability
+- **v1.3**: Enhanced error handling and added interactive export options
+- **v1.2**: Integrated Nobl9 Reports API and improved efficiency
+- **v1.1**: Added Excel export and enhanced data source analysis
+- **v1.0**: Initial release with core analysis features
