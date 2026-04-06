@@ -202,11 +202,11 @@ class ErrorBudgetAnalyzer:
             print_colored(f"Error parsing JSON output: {e}", colorama.Fore.RED)
             return []
     
-    def _get_all_slo_statuses(self) -> Dict[Tuple[str, str], Dict]:
-        """Get status for all SLOs using batch API (v2/slos endpoint).
+    def _get_all_slos(self) -> Dict[Tuple[str, str], Dict]:
+        """Get all SLO definitions using batch API (v2/slos endpoint).
         
         Returns:
-            Dictionary mapping (project, slo_name) to status data
+            Dictionary mapping (project, slo_name) to SLO definition
         """
         if self.is_custom_instance and self.base_url:
             api_url = f"{self.base_url}/v2/slos"
@@ -277,36 +277,56 @@ class ErrorBudgetAnalyzer:
                 traceback.print_exc()
                 break
         
-        print_colored(f"✓ Retrieved status for {len(status_map)} SLOs in {page_count} API calls", colorama.Fore.GREEN)
+        print_colored(f"✓ Retrieved {len(status_map)} SLO definitions in {page_count} API calls", colorama.Fore.GREEN)
         return status_map
+    
+    def _get_slo_status(self, project: str, slo_name: str) -> Optional[Dict]:
+        """Get status for a single SLO.
+        
+        Uses the SLO status endpoint which includes error budget and burn rate.
+        """
+        if self.is_custom_instance and self.base_url:
+            # Try both possible paths
+            api_url = f"{self.base_url}/slo/v2/status/project/{project}/slo/{slo_name}"
+        else:
+            api_url = f"https://app.nobl9.com/api/slo/v2/status/project/{project}/slo/{slo_name}"
+        
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Organization": self.organization_id
+        }
+        
+        try:
+            response = requests.get(api_url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return None
+        except Exception:
+            return None
     
     def collect_slo_budget_data(self):
         """Collect SLO data and error budget information."""
         print_header("COLLECTING SLO DATA")
         
-        # Get all SLO statuses from batch API (much more efficient!)
-        status_map = self._get_all_slo_statuses()
-        if not status_map:
-            print_colored("No SLO status data retrieved", colorama.Fore.YELLOW)
+        # Step 1: Get all SLO definitions from batch API
+        slo_definitions = self._get_all_slos()
+        if not slo_definitions:
+            print_colored("No SLO definitions retrieved", colorama.Fore.YELLOW)
             return
         
-        self.total_slos_checked = len(status_map)
-        print(f"\nAnalyzing {self.total_slos_checked} SLOs for error budget burn...")
-        
-        # Debug: Show sample SLO structure
-        if status_map:
-            sample_slo = next(iter(status_map.values()))
-            print_colored(f"Sample SLO keys: {list(sample_slo.keys())[:20]}", colorama.Fore.CYAN)
-            if "errorBudget" in sample_slo:
-                print_colored(f"Error budget structure: {sample_slo['errorBudget']}", colorama.Fore.CYAN)
+        self.total_slos_checked = len(slo_definitions)
+        print(f"\nFetching error budget status for {self.total_slos_checked} SLOs...")
+        print_colored("(This requires individual API calls per SLO)", colorama.Fore.CYAN)
         
         # Process each SLO
         processed = 0
         skipped_healthy = 0
         skipped_low_burn = 0
+        api_calls_made = 0
         sample_shown = False
         
-        for (project, slo_name), slo_item in status_map.items():
+        for (project, slo_name), slo_item in slo_definitions.items():
             processed += 1
             if processed % 50 == 0:
                 print(f"  Analyzed {processed}/{self.total_slos_checked} SLOs...")
@@ -344,11 +364,19 @@ class ErrorBudgetAnalyzer:
                         slo_target = objective.get("target", 0.0)
                         break
             
-            # Get error budget and status info
-            error_budget = slo_item.get("errorBudget", {})
+            # Get status data from individual status endpoint
+            api_calls_made += 1
+            status_data = self._get_slo_status(project, slo_name)
+            
+            if not status_data:
+                # Skip SLOs we can't get status for
+                continue
+            
+            # Extract error budget and status info from status response
+            error_budget = status_data.get("errorBudget", {})
             budget_remaining = error_budget.get("remaining", 100.0)
-            burn_rate = slo_item.get("burnRate", 0.0)
-            health_status = slo_item.get("status", "unknown")
+            burn_rate = status_data.get("burnRate", 0.0)
+            health_status = status_data.get("status", "unknown")
             
             # Debug: Show first SLO with budget data
             if not sample_shown and budget_remaining < 100:
@@ -400,6 +428,7 @@ class ErrorBudgetAnalyzer:
         self.slos_with_burn.sort(key=lambda x: x.budget_burned_pct, reverse=True)
         
         print_colored(f"\n✓ Analyzed {self.total_slos_checked} SLOs", colorama.Fore.GREEN)
+        print_colored(f"  - Made {api_calls_made} status API calls", colorama.Fore.CYAN)
         if skipped_healthy > 0:
             print_colored(f"  - Skipped {skipped_healthy} healthy SLOs (optimization)", colorama.Fore.CYAN)
         if skipped_low_burn > 0:
