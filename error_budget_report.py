@@ -233,28 +233,48 @@ class ErrorBudgetAnalyzer:
             try:
                 response = requests.get(api_url, headers=headers, params=params, timeout=30)
                 if response.status_code != 200:
-                    print_colored(f"API error {response.status_code}: {response.text}", colorama.Fore.YELLOW)
+                    print_colored(f"API error {response.status_code}: {response.text[:500]}", colorama.Fore.YELLOW)
+                    # Try to show response structure for debugging
+                    try:
+                        error_data = response.json()
+                        print_colored(f"Response keys: {list(error_data.keys())}", colorama.Fore.YELLOW)
+                    except:
+                        pass
                     break
                 
                 data = response.json()
-                slos = data.get("slos", [])
+                
+                # Debug: Show response structure
+                if page_count == 1:
+                    print_colored(f"  API Response keys: {list(data.keys())}", colorama.Fore.CYAN)
+                
+                # Try different possible key names
+                slos = data.get("slos", data.get("data", data.get("items", [])))
                 
                 print(f"  Page {page_count}: Retrieved {len(slos)} SLOs")
                 
                 # Build status map
                 for slo_item in slos:
-                    project = slo_item.get("project", {}).get("name", "")
+                    # Handle different response structures
+                    if isinstance(slo_item.get("project"), dict):
+                        project = slo_item.get("project", {}).get("name", "")
+                    else:
+                        project = slo_item.get("project", "")
+                    
                     slo_name = slo_item.get("name", "")
+                    
                     if project and slo_name:
                         status_map[(project, slo_name)] = slo_item
                 
-                # Check for next page
-                cursor = data.get("cursor")
+                # Check for next page - try multiple cursor field names
+                cursor = data.get("cursor") or data.get("nextCursor") or data.get("next")
                 if not cursor:
                     break
                     
             except Exception as e:
                 print_colored(f"Error fetching SLO statuses: {e}", colorama.Fore.YELLOW)
+                import traceback
+                traceback.print_exc()
                 break
         
         print_colored(f"✓ Retrieved status for {len(status_map)} SLOs in {page_count} API calls", colorama.Fore.GREEN)
