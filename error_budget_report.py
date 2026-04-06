@@ -293,10 +293,18 @@ class ErrorBudgetAnalyzer:
         self.total_slos_checked = len(status_map)
         print(f"\nAnalyzing {self.total_slos_checked} SLOs for error budget burn...")
         
+        # Debug: Show sample SLO structure
+        if status_map:
+            sample_slo = next(iter(status_map.values()))
+            print_colored(f"Sample SLO keys: {list(sample_slo.keys())[:20]}", colorama.Fore.CYAN)
+            if "errorBudget" in sample_slo:
+                print_colored(f"Error budget structure: {sample_slo['errorBudget']}", colorama.Fore.CYAN)
+        
         # Process each SLO
         processed = 0
         skipped_healthy = 0
         skipped_low_burn = 0
+        sample_shown = False
         
         for (project, slo_name), slo_item in status_map.items():
             processed += 1
@@ -341,6 +349,15 @@ class ErrorBudgetAnalyzer:
             budget_remaining = error_budget.get("remaining", 100.0)
             burn_rate = slo_item.get("burnRate", 0.0)
             health_status = slo_item.get("status", "unknown")
+            
+            # Debug: Show first SLO with budget data
+            if not sample_shown and budget_remaining < 100:
+                print_colored(f"\nSample SLO with budget burn:", colorama.Fore.YELLOW)
+                print_colored(f"  Name: {slo_name}", colorama.Fore.YELLOW)
+                print_colored(f"  Budget remaining: {budget_remaining}%", colorama.Fore.YELLOW)
+                print_colored(f"  Burn rate: {burn_rate}", colorama.Fore.YELLOW)
+                print_colored(f"  Status: {health_status}", colorama.Fore.YELLOW)
+                sample_shown = True
             
             # Quick filter: Skip healthy SLOs if threshold is high
             if self.budget_drop_threshold > 20.0 and health_status == "healthy":
