@@ -202,60 +202,94 @@ class ErrorBudgetAnalyzer:
             print_colored(f"Error parsing JSON output: {e}", colorama.Fore.RED)
             return []
     
-    def _get_slo_status(self, project: str, slo_name: str) -> Optional[Dict]:
-        """Get SLO status from Nobl9 Status API."""
+    def _get_all_slo_statuses(self) -> Dict[Tuple[str, str], Dict]:
+        """Get status for all SLOs using batch API (v2/slos endpoint).
+        
+        Returns:
+            Dictionary mapping (project, slo_name) to status data
+        """
         if self.is_custom_instance and self.base_url:
-            api_url = f"{self.base_url}/slo/v2/status/project/{project}/slo/{slo_name}"
+            api_url = f"{self.base_url}/v2/slos"
         else:
-            api_url = f"https://app.nobl9.com/api/slo/v2/status/project/{project}/slo/{slo_name}"
+            api_url = f"https://app.nobl9.com/api/v2/slos"
         
         headers = {
             "Authorization": f"Bearer {self.access_token}",
             "Organization": self.organization_id
         }
         
-        try:
-            response = requests.get(api_url, headers=headers, timeout=10)
-            if response.status_code == 200:
-                return response.json()
-            else:
-                return None
-        except Exception as e:
-            return None
+        status_map = {}
+        cursor = None
+        page_count = 0
+        
+        print("Fetching SLO status data from Nobl9 API...")
+        
+        while True:
+            page_count += 1
+            params = {"limit": 500}
+            if cursor:
+                params["cursor"] = cursor
+            
+            try:
+                response = requests.get(api_url, headers=headers, params=params, timeout=30)
+                if response.status_code != 200:
+                    print_colored(f"API error {response.status_code}: {response.text}", colorama.Fore.YELLOW)
+                    break
+                
+                data = response.json()
+                slos = data.get("slos", [])
+                
+                print(f"  Page {page_count}: Retrieved {len(slos)} SLOs")
+                
+                # Build status map
+                for slo_item in slos:
+                    project = slo_item.get("project", {}).get("name", "")
+                    slo_name = slo_item.get("name", "")
+                    if project and slo_name:
+                        status_map[(project, slo_name)] = slo_item
+                
+                # Check for next page
+                cursor = data.get("cursor")
+                if not cursor:
+                    break
+                    
+            except Exception as e:
+                print_colored(f"Error fetching SLO statuses: {e}", colorama.Fore.YELLOW)
+                break
+        
+        print_colored(f"✓ Retrieved status for {len(status_map)} SLOs in {page_count} API calls", colorama.Fore.GREEN)
+        return status_map
     
     def collect_slo_budget_data(self):
         """Collect SLO data and error budget information."""
         print_header("COLLECTING SLO DATA")
-        print("Fetching SLOs and error budget information...")
         
-        # Get all SLOs
-        slos_data = self._run_sloctl_command(["get", "slos", "-A"])
-        if not slos_data:
-            print_colored("No SLOs found", colorama.Fore.YELLOW)
+        # Get all SLO statuses from batch API (much more efficient!)
+        status_map = self._get_all_slo_statuses()
+        if not status_map:
+            print_colored("No SLO status data retrieved", colorama.Fore.YELLOW)
             return
         
-        self.total_slos_checked = len(slos_data)
-        print(f"Found {self.total_slos_checked} SLOs to analyze...")
+        self.total_slos_checked = len(status_map)
+        print(f"\nAnalyzing {self.total_slos_checked} SLOs for error budget burn...")
         
         # Process each SLO
         processed = 0
         skipped_healthy = 0
-        api_calls_made = 0
+        skipped_low_burn = 0
         
-        for slo_data in slos_data:
+        for (project, slo_name), slo_item in status_map.items():
             processed += 1
-            if processed % 10 == 0:
-                print(f"  Processing SLO {processed}/{self.total_slos_checked}...")
+            if processed % 50 == 0:
+                print(f"  Analyzed {processed}/{self.total_slos_checked} SLOs...")
             
-            metadata = slo_data.get("metadata", {})
-            spec = slo_data.get("spec", {})
-            status = slo_data.get("status", {})
-            
-            slo_name = metadata.get("name", "")
-            project = metadata.get("project", "")
+            # Extract data from v2 API response structure
+            display_name = slo_item.get("displayName", slo_name)
+            service_obj = slo_item.get("service", {})
+            service = service_obj.get("name", "") if isinstance(service_obj, dict) else str(service_obj)
             
             # Check if composite SLO
-            objectives = spec.get("objectives", [])
+            objectives = slo_item.get("objectives", [])
             is_composite = False
             for objective in objectives:
                 if "composite" in objective and "components" in objective.get("composite", {}):
@@ -265,7 +299,7 @@ class ErrorBudgetAnalyzer:
             slo_type = "Composite" if is_composite else "Regular"
             
             # Get time window in days
-            time_windows = spec.get("timeWindows", [])
+            time_windows = slo_item.get("timeWindows", [])
             time_window_days = 0
             if time_windows:
                 tw = time_windows[0]
@@ -282,56 +316,57 @@ class ErrorBudgetAnalyzer:
                         slo_target = objective.get("target", 0.0)
                         break
             
+            # Get error budget and status info
+            error_budget = slo_item.get("errorBudget", {})
+            budget_remaining = error_budget.get("remaining", 100.0)
+            burn_rate = slo_item.get("burnRate", 0.0)
+            health_status = slo_item.get("status", "unknown")
+            
             # Quick filter: Skip healthy SLOs if threshold is high
-            # If SLO status is "healthy" and threshold > 20%, likely won't meet criteria
-            initial_health = status.get("health", "unknown")
-            if self.budget_drop_threshold > 20.0 and initial_health == "healthy":
+            if self.budget_drop_threshold > 20.0 and health_status == "healthy":
                 skipped_healthy += 1
                 continue
-            
-            # Get detailed status data from API
-            api_calls_made += 1
-            status_data = self._get_slo_status(project, slo_name)
-            if not status_data:
-                continue
-            
-            # Extract error budget information
-            # The status API returns error budget as a percentage
-            budget_remaining = status_data.get("errorBudget", {}).get("remaining", 100.0)
-            burn_rate = status_data.get("burnRate", 0.0)
-            health_status = status_data.get("status", "unknown")
             
             # Calculate budget burned
             budget_burned = (100.0 - budget_remaining)
             
             # Early exit if doesn't meet threshold
             if budget_burned < self.budget_drop_threshold:
+                skipped_low_burn += 1
                 continue
             
-            # Only process if time window is compatible with analysis period
+            # Only add if time window is compatible with analysis period
             if time_window_days > 0 and self.time_period_hours / 24 <= time_window_days:
-                    self.slos_with_burn.append(SLOBudgetInfo(
-                        name=slo_name,
-                        display_name=metadata.get("displayName", slo_name),
-                        project=project,
-                        service=spec.get("service", ""),
-                        slo_type=slo_type,
-                        target=slo_target,
-                        budget_remaining_pct=budget_remaining,
-                        budget_burned_pct=budget_burned,
-                        burn_rate=burn_rate,
-                        status=health_status,
-                        time_window_days=time_window_days,
-                        alert_policies=spec.get("alertPolicies", []),
-                        created_at=spec.get("createdAt", "")
-                    ))
+                alert_policies = slo_item.get("alertPolicies", [])
+                if isinstance(alert_policies, list):
+                    alert_policy_names = [ap.get("name", "") if isinstance(ap, dict) else str(ap) for ap in alert_policies]
+                else:
+                    alert_policy_names = []
+                
+                self.slos_with_burn.append(SLOBudgetInfo(
+                    name=slo_name,
+                    display_name=display_name,
+                    project=project,
+                    service=service,
+                    slo_type=slo_type,
+                    target=slo_target,
+                    budget_remaining_pct=budget_remaining,
+                    budget_burned_pct=budget_burned,
+                    burn_rate=burn_rate,
+                    status=health_status,
+                    time_window_days=time_window_days,
+                    alert_policies=alert_policy_names,
+                    created_at=slo_item.get("createdAt", "")
+                ))
         
         # Sort by budget burned descending
         self.slos_with_burn.sort(key=lambda x: x.budget_burned_pct, reverse=True)
         
         print_colored(f"\n✓ Analyzed {self.total_slos_checked} SLOs", colorama.Fore.GREEN)
-        print_colored(f"  - Skipped {skipped_healthy} healthy SLOs (optimization)", colorama.Fore.CYAN)
-        print_colored(f"  - Made {api_calls_made} Status API calls", colorama.Fore.CYAN)
+        if skipped_healthy > 0:
+            print_colored(f"  - Skipped {skipped_healthy} healthy SLOs (optimization)", colorama.Fore.CYAN)
+        if skipped_low_burn > 0:
+            print_colored(f"  - Skipped {skipped_low_burn} SLOs below threshold", colorama.Fore.CYAN)
         print_colored(f"✓ Found {len(self.slos_with_burn)} SLOs with {self.budget_drop_threshold}%+ budget burn", colorama.Fore.GREEN)
     
     def display_console_report(self):
