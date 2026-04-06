@@ -239,6 +239,9 @@ class ErrorBudgetAnalyzer:
         
         # Process each SLO
         processed = 0
+        skipped_healthy = 0
+        api_calls_made = 0
+        
         for slo_data in slos_data:
             processed += 1
             if processed % 10 == 0:
@@ -279,7 +282,15 @@ class ErrorBudgetAnalyzer:
                         slo_target = objective.get("target", 0.0)
                         break
             
-            # Get status data from API
+            # Quick filter: Skip healthy SLOs if threshold is high
+            # If SLO status is "healthy" and threshold > 20%, likely won't meet criteria
+            initial_health = status.get("health", "unknown")
+            if self.budget_drop_threshold > 20.0 and initial_health == "healthy":
+                skipped_healthy += 1
+                continue
+            
+            # Get detailed status data from API
+            api_calls_made += 1
             status_data = self._get_slo_status(project, slo_name)
             if not status_data:
                 continue
@@ -291,13 +302,14 @@ class ErrorBudgetAnalyzer:
             health_status = status_data.get("status", "unknown")
             
             # Calculate budget burned
-            # If time window is shorter than analysis period, adjust
+            budget_burned = (100.0 - budget_remaining)
+            
+            # Early exit if doesn't meet threshold
+            if budget_burned < self.budget_drop_threshold:
+                continue
+            
+            # Only process if time window is compatible with analysis period
             if time_window_days > 0 and self.time_period_hours / 24 <= time_window_days:
-                # Calculate approximate burn in the period
-                budget_burned = (100.0 - budget_remaining)
-                
-                # Check if meets threshold
-                if budget_burned >= self.budget_drop_threshold:
                     self.slos_with_burn.append(SLOBudgetInfo(
                         name=slo_name,
                         display_name=metadata.get("displayName", slo_name),
@@ -318,6 +330,8 @@ class ErrorBudgetAnalyzer:
         self.slos_with_burn.sort(key=lambda x: x.budget_burned_pct, reverse=True)
         
         print_colored(f"\n✓ Analyzed {self.total_slos_checked} SLOs", colorama.Fore.GREEN)
+        print_colored(f"  - Skipped {skipped_healthy} healthy SLOs (optimization)", colorama.Fore.CYAN)
+        print_colored(f"  - Made {api_calls_made} Status API calls", colorama.Fore.CYAN)
         print_colored(f"✓ Found {len(self.slos_with_burn)} SLOs with {self.budget_drop_threshold}%+ budget burn", colorama.Fore.GREEN)
     
     def display_console_report(self):
